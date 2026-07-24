@@ -1,0 +1,243 @@
+<?xml version="1.0"?>
+<robot name="robot" xmlns:xacro="http://www.ros.org/wiki/xacro" xmlns:gz="http://gazebosim.org/schema">
+
+    <material name="orange">
+        <color rgba="1 0.55 0 1"/>
+    </material>
+
+    <material name="black">
+        <color rgba="0.1 0.1 0.1 1"/>
+    </material>
+
+    <material name="silver">
+        <color rgba="0.6 0.6 0.6 1"/>
+    </material>
+
+    <material name="grey">
+        <color rgba="0.25 0.25 0.25 1"/>
+    </material>
+
+    <material name="blue">
+        <color rgba="0.2 0.2 1 1"/>
+    </material>
+
+    <material name="red">
+        <color rgba="1 0.1 0.1 1"/>
+    </material>
+
+
+
+
+
+    <xacro:macro name="inertial_sphere" params="mass radius *origin">
+        <inertial>
+            <xacro:insert_block name="origin"/>
+            <mass value="${mass}" />
+            <inertia ixx="${(2/5) * mass * (radius*radius)}" ixy="0.0" ixz="0.0"
+                    iyy="${(2/5) * mass * (radius*radius)}" iyz="0.0"
+                    izz="${(2/5) * mass * (radius*radius)}" />
+        </inertial>
+    </xacro:macro>  
+
+    <xacro:macro name="inertial_box" params="mass x y z *origin">
+        <inertial>
+            <xacro:insert_block name="origin"/>
+            <mass value="${mass}" />
+            <inertia ixx="${(1/12) * mass * (y*y+z*z)}" ixy="0.0" ixz="0.0"
+                    iyy="${(1/12) * mass * (x*x+z*z)}" iyz="0.0"
+                    izz="${(1/12) * mass * (x*x+y*y)}" />
+        </inertial>
+    </xacro:macro>
+
+    <xacro:macro name="inertial_cylinder" params="mass length radius *origin">
+        <inertial>
+            <xacro:insert_block name="origin"/>
+            <mass value="${mass}" />
+            <inertia ixx="${(1/12) * mass * (3*radius*radius + length*length)}" ixy="0.0" ixz="0.0"
+                    iyy="${(1/12) * mass * (3*radius*radius + length*length)}" iyz="0.0"
+                    izz="${(1/2) * mass * (radius*radius)}" />
+        </inertial>
+    </xacro:macro>
+
+
+
+
+
+
+    <xacro:property name="chassis_length" value="0.20"/>
+    <xacro:property name="chassis_width" value="0.18"/>
+    <xacro:property name="chassis_height" value="0.05"/>
+    <xacro:property name="slab_height" value="0.005"/>
+    <xacro:property name="chassis_mass" value="2.0"/>
+    <xacro:property name="chassis_color" value="orange"/>
+
+    <xacro:property name="wheel_seperation" value="0.195"/>
+    <xacro:property name="wheel_radius" value="0.03"/>
+    <xacro:property name="wheel_width" value="0.008"/>
+
+    <xacro:property name="wheel_mass" value="0.08"/>
+    <xacro:property name="wheel_height_offset" value="0.01"/>
+
+    <xacro:property name="castor_wheel_diameter" value="${wheel_radius+wheel_height_offset}"/>
+    <xacro:property name="castor_wheel_mass" value="0.08"/>
+
+
+
+
+
+
+
+    <xacro:include filename="$(find robot_description)/urdf/urdf_models/box_with_fillet_macro.xacro"/>
+    <xacro:include filename="$(find robot_description)/urdf/urdf_models/drive_wheel_macro.xacro"/>
+    <xacro:include filename="$(find robot_description)/urdf/urdf_models/drive_wheel_rim_macro.xacro"/>
+    <xacro:include filename="$(find robot_description)/urdf/urdf_models/lidar.xacro"/>
+    <xacro:include filename="$(find robot_description)/urdf/robot_gazebo_properties.xacro" />
+    <xacro:include filename="$(find robot_description)/urdf/robot_gazebo_control.xacro" />
+
+
+
+
+
+
+
+
+    <link name="base_link">  
+    </link>
+
+
+    <joint name="chassis_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="chassis"/>
+        <origin xyz="0 0 ${wheel_radius+wheel_height_offset}"/>
+    </joint>
+
+    <link name="chassis">
+        <xacro:insert_box_with_fillet x="-0.040" y="0" z="0" 
+            size_x="${chassis_length}" size_y="${chassis_width}" size_z="${slab_height}" 
+            fillet_radius="0.02"/>
+        <xacro:insert_box_with_fillet x="-0.040" y="0" z="${chassis_height}" 
+            size_x="${chassis_length}" size_y="${chassis_width}" size_z="${slab_height}" 
+            fillet_radius="0.02"/>
+
+        <visual>
+            <origin xyz="0.04 0.07 ${chassis_height/2}" rpy="0 0 0"/>
+            <geometry>
+                <cylinder radius="0.004" length="${chassis_height}"/>
+            </geometry>
+            <material name="orange"/>
+        </visual>
+        <visual>
+            <origin xyz="0.04 -0.07 ${chassis_height/2}" rpy="0 0 0"/>
+            <geometry>
+                <cylinder radius="0.004" length="${chassis_height}"/>
+            </geometry>
+            <material name="orange"/>
+        </visual>
+
+        <visual>
+            <origin xyz="-0.12 0.07 ${chassis_height/2}" rpy="0 0 0"/>
+            <geometry>
+                <cylinder radius="0.004" length="${chassis_height}"/>
+            </geometry>
+            <material name="orange"/>
+        </visual>
+        <visual>
+            <origin xyz="-0.12 -0.07 ${chassis_height/2}" rpy="0 0 0"/>
+            <geometry>
+                <cylinder radius="0.004" length="${chassis_height}"/>
+            </geometry>
+            <material name="orange"/>
+        </visual>
+
+        <collision>
+           <origin xyz="-0.04 0 ${chassis_height/2}" rpy="0 0 0"/>
+            <geometry>
+                <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+            </geometry>
+        </collision>
+        <xacro:inertial_box mass="${chassis_mass}" x="${chassis_length}" y="${chassis_width}" z="${chassis_height}">
+            <origin xyz="-0.07 0 ${chassis_height/2}" rpy="0 0 0"/>
+        </xacro:inertial_box>
+    </link>
+
+
+
+    <xacro:insert_drive_wheel 
+        base_name="left_wheel" 
+        parent_name="base_link"
+        x="0" y="${wheel_seperation/2}" z="${wheel_radius}"
+        mass="${wheel_mass}"
+        radius="${wheel_radius}"
+        thickness="${wheel_width}"/>
+
+    <xacro:insert_drive_wheel_rim
+        base_name="left_rim" 
+        parent_name="left_wheel" 
+        radius="${wheel_radius}"
+        thickness="${wheel_width}"
+        spoke_width="0.005"/>
+
+
+
+    <xacro:insert_drive_wheel 
+        base_name="right_wheel" 
+        parent_name="base_link" 
+        x="0" y="${-wheel_seperation/2}" z="${wheel_radius}"
+        mass="${wheel_mass}"
+        radius="${wheel_radius}"
+        thickness="${wheel_width}"/>
+    
+    <xacro:insert_drive_wheel_rim
+        base_name="right_rim" 
+        parent_name="right_wheel" 
+        radius="${wheel_radius}"
+        thickness="${wheel_width}"
+        spoke_width="0.005"/>
+
+
+
+    <joint name="castor_wheel_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="castor_wheel"/>
+        <origin xyz="-0.10 0 ${castor_wheel_diameter/2}"/>
+    </joint>
+
+    <link name="castor_wheel">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <sphere radius="${castor_wheel_diameter/2}" />
+            </geometry>
+            <material name="grey">
+                <color rgba="0.25 0.25 0.25 1"/>
+            </material>
+        </visual>
+        <collision>
+           <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <sphere radius="${castor_wheel_diameter/2}" />
+            </geometry>
+        </collision>
+        <xacro:inertial_sphere mass="${castor_wheel_mass}" radius="${castor_wheel_diameter/2}">
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+        </xacro:inertial_sphere>
+    </link>
+
+
+    <xacro:property name="lidar_z_offset" value="0.04"/>
+    <xacro:insert_lidar 
+        base_name="lidar" 
+        parent_name="chassis" 
+        x="-0.0115" y="0" z="${chassis_height+lidar_z_offset}"
+        mass="0.1"/>
+
+
+    <joint name="imu_joint" type="fixed">
+        <parent link="chassis"/>
+        <child link="imu"/>
+        <origin xyz="0.03 0 ${chassis_height}"/>
+    </joint>
+        
+    <link name="imu"></link>
+    
+</robot>
