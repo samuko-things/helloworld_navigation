@@ -52,6 +52,7 @@ struct BezierAnchor {
   Point2D p0;
   Point2D p1;
   Point2D p2;
+  double a_dist;
 };
 
 class StringBezierSmoother : public rclcpp::Node
@@ -99,7 +100,7 @@ private:
 
   Point2D computeBezierPoint(const Point2D& p0, const Point2D& p1, const Point2D& p2, double t);
 
-  Point2D calculateSafeAnchor(const Point2D& p_curr, const Point2D& p_neighbor, double d);
+  std::tuple<Point2D, Point2D, double> calculateSafeAnchor(const Point2D& p_prev, const Point2D& p_curr, const Point2D& p_next, double d);
 
   void densifyStraightLineSegment(const Point2D& start_pt, const Point2D& end_pt, std::vector<Point2D>& out_points);
 

@@ -5,7 +5,7 @@ namespace string_bezier_smoother
 {
 
 StringBezierSmoother::StringBezierSmoother() : Node("string_bezier_smoother"),
-string_smooth_iterations(20), points_per_bezier_curve(15), bezier_anchor_distance(0.3)
+string_smooth_iterations(5), points_per_bezier_curve(20), bezier_anchor_distance(0.3)
 {
   declare_parameter<int>("string_smooth_iterations", string_smooth_iterations);
   declare_parameter<int>("points_per_bezier_curve", points_per_bezier_curve);
@@ -33,7 +33,7 @@ string_smooth_iterations(20), points_per_bezier_curve(15), bezier_anchor_distanc
   );
 
   path_pub_ = create_publisher<nav_msgs::msg::Path>(
-    "/plan_smooth",
+    "/plan_smoothed",
     default_qos
   );
 
@@ -60,6 +60,7 @@ nav_msgs::msg::Path StringBezierSmoother::smooth(const nav_msgs::msg::Path &npat
 {
   nav_msgs::msg::Path path = npath;
   path = greedyStringPullSmoothIter(path, string_smooth_iterations);
+  // path = greedyStringPullSmooth(path);
   path = smoothAndDensifyPath(
     path,
     bezier_anchor_distance,
@@ -152,6 +153,8 @@ bool StringBezierSmoother::lineOfSight(const GridNode &start, const GridNode &en
 nav_msgs::msg::Path StringBezierSmoother::greedyStringPullSmooth(const nav_msgs::msg::Path& npath) {
 
   std::vector<geometry_msgs::msg::PoseStamped> poses = npath.poses;
+  std::vector<geometry_msgs::msg::PoseStamped> new_poses = npath.poses;
+  new_poses.clear();
   
   nav_msgs::msg::Path smoothed_path;
   smoothed_path.header = npath.header;
@@ -164,17 +167,24 @@ nav_msgs::msg::Path StringBezierSmoother::greedyStringPullSmooth(const nav_msgs:
   int j = 2;
   int n = static_cast<int>(poses.size());
 
-  while (j < n) {
-      if (lineOfSight(poseToGridNode(poses[i].pose), poseToGridNode(poses[j].pose))) {
-          poses.erase(poses.begin() + (j - 1));
-          n = static_cast<int>(poses.size());
-      } else {
-          i = j - 1;
-          j = j + 1;
-      }
-  }
+  new_poses.push_back(poses[i]);
 
-  smoothed_path.poses = poses;
+  while (true) {
+    if (!(j<n)){
+      break;
+    }
+    else if (lineOfSight(poseToGridNode(poses[i].pose), poseToGridNode(poses[j].pose))) {
+      j=j;  
+    } else {
+        i = j - 1;
+        new_poses.push_back(poses[i]);
+    }
+    j += 1;
+  }
+  i = j-1;
+  new_poses.push_back(poses[i]);
+
+  smoothed_path.poses = new_poses;
   return smoothed_path;
 
 }
@@ -200,20 +210,26 @@ Point2D StringBezierSmoother::computeBezierPoint(const Point2D& p0, const Point2
   return p0 * (one_minus_t * one_minus_t) + p1 * (2.0 * one_minus_t * t) + p2 * (t * t);
 }
 
-Point2D StringBezierSmoother::calculateSafeAnchor(const Point2D& p_curr, const Point2D& p_neighbor, double d) {
-  Point2D vector = p_neighbor - p_curr;
-  double length = std::hypot(vector.x, vector.y);
+std::tuple<Point2D, Point2D, double> StringBezierSmoother::calculateSafeAnchor(const Point2D& p_prev, const Point2D& p_curr, const Point2D& p_next, double d) {
+  Point2D vect_prev = p_prev - p_curr;
+  double len_prev = std::hypot(vect_prev.x, vect_prev.y);
+  Point2D u_vect_prev = vect_prev * (1.0 / len_prev);
 
-  if (length == 0.0) {
-    return p_curr;
+  Point2D vect_next = p_next - p_curr;
+  double len_next = std::hypot(vect_next.x, vect_next.y);
+  Point2D u_vect_next = vect_next * (1.0 / len_next);
+
+  if((len_prev < 2*d || len_next < 2*d) && (len_prev < len_next)){
+    return {p_curr+(u_vect_prev*(0.5*len_prev)), p_curr+(u_vect_next*(0.5*len_prev)), (0.5*len_prev)};
   }
-
-  Point2D unit_direction = vector * (1.0 / length);
-
-  if (length >= 2.0 * d) {
-    return p_curr + (unit_direction * d);
-  } else {
-    return p_curr + (vector * 0.5);
+  else if((len_prev < 2*d || len_next < 2*d) && (len_prev > len_next)) {
+    return {p_curr+(u_vect_prev*(0.5*len_next)), p_curr+(u_vect_next*(0.5*len_next)), (0.5*len_next)};
+  }
+  else if((len_prev < 2*d || len_next < 2*d) && (len_prev == len_next)) {
+    return {p_curr+(u_vect_prev*(0.5*len_prev)), p_curr+(u_vect_next*(0.5*len_next)), (0.5*len_prev)};
+  }
+  else {
+    return {p_curr+(u_vect_prev*d), p_curr+(u_vect_next*d), d};
   }
 }
 
@@ -252,7 +268,7 @@ nav_msgs::msg::Path StringBezierSmoother::smoothAndDensifyPath(
   int num_points_per_corner)
 {
   const auto& poses = string_pulled_path.poses;
-  if (poses.size() < 3) {
+  if (poses.empty()) {
     return string_pulled_path;
   }
 
@@ -261,54 +277,55 @@ nav_msgs::msg::Path StringBezierSmoother::smoothAndDensifyPath(
   double z_height = poses[0].pose.position.z;
 
   std::vector<Point2D> raw_points;
-  raw_points.reserve(poses.size() * num_points_per_corner);
+  raw_points.reserve(poses.size() * std::max(num_points_per_corner, 10));
 
-  // 1. Pre-calculate safe curve anchor pairs for interior waypoints
-  std::vector<BezierAnchor> anchors(poses.size());
-  for (size_t i = 1; i < poses.size() - 1; ++i) {
-    Point2D p_prev{poses[i - 1].pose.position.x, poses[i - 1].pose.position.y};
-    Point2D p_curr{poses[i].pose.position.x, poses[i].pose.position.y};
-    Point2D p_next{poses[i + 1].pose.position.x, poses[i + 1].pose.position.y};
-
-    anchors[i] = {
-      calculateSafeAnchor(p_curr, p_prev, d),
-      p_curr,
-      calculateSafeAnchor(p_curr, p_next, d)
-    };
-  }
-
-  // 2. Build continuous sequential line coordinates
   Point2D start_pt{poses[0].pose.position.x, poses[0].pose.position.y};
   raw_points.push_back(start_pt);
 
-  for (size_t i = 1; i < poses.size() - 1; ++i) {
-    const auto& p0 = anchors[i].p0;
-    const auto& p1 = anchors[i].p1;
-    const auto& p2 = anchors[i].p2;
+  // If we have intermediate corner waypoints (3 or more poses), apply Bezier cornering
+  if (poses.size() >= 3) {
+    std::vector<BezierAnchor> anchors(poses.size());
+    for (size_t i = 1; i < poses.size() - 1; ++i) {
+      Point2D p_prev{poses[i - 1].pose.position.x, poses[i - 1].pose.position.y};
+      Point2D p_curr{poses[i].pose.position.x, poses[i].pose.position.y};
+      Point2D p_next{poses[i + 1].pose.position.x, poses[i + 1].pose.position.y};
 
-    // Densify straight line segment up to p0
-    if (distance2D(raw_points.back(), p0) > 1e-4) {
-      densifyStraightLineSegment(raw_points.back(), p0, raw_points);
+      auto [a_prev, a_next, a_dist] = calculateSafeAnchor(p_prev, p_curr, p_next, d);
+      anchors[i] = {a_prev, p_curr, a_next, a_dist};
     }
 
-    // Draw high-density Bezier curve points
-    for (int step = 1; step <= num_points_per_corner; ++step) {
-      double t = static_cast<double>(step) / static_cast<double>(num_points_per_corner);
-      Point2D bezier_pt = computeBezierPoint(p0, p1, p2, t);
+    for (size_t i = 1; i < poses.size() - 1; ++i) {
+      const auto& p0 = anchors[i].p0;
+      const auto& p1 = anchors[i].p1;
+      const auto& p2 = anchors[i].p2;
+      const auto& a_dist = anchors[i].a_dist;
 
-      if (distance2D(raw_points.back(), bezier_pt) > 1e-4) {
-        raw_points.push_back(bezier_pt);
+      int num_of_points = static_cast<int>((a_dist / d) * num_points_per_corner);
+
+      if (distance2D(raw_points.back(), p0) > 1e-4) {
+        densifyStraightLineSegment(raw_points.back(), p0, raw_points);
+      }
+
+      for (int step = 1; step <= num_of_points; ++step) {
+        double t = static_cast<double>(step) / static_cast<double>(num_of_points);
+        Point2D bezier_pt = computeBezierPoint(p0, p1, p2, t);
+
+        if (distance2D(raw_points.back(), bezier_pt) > 1e-4) {
+          raw_points.push_back(bezier_pt);
+        }
       }
     }
   }
 
-  // Densify final segment to goal
-  Point2D p_goal{poses.back().pose.position.x, poses.back().pose.position.y};
-  if (distance2D(raw_points.back(), p_goal) > 1e-4) {
-    densifyStraightLineSegment(raw_points.back(), p_goal, raw_points);
+  // Final Segment Densification (Runs for ALL paths with >= 2 points)
+  if (poses.size() >= 2) {
+    Point2D p_goal{poses.back().pose.position.x, poses.back().pose.position.y};
+    if (distance2D(raw_points.back(), p_goal) > 1e-4) {
+      densifyStraightLineSegment(raw_points.back(), p_goal, raw_points);
+    }
   }
 
-  // 3. Dynamic Orientation Extraction & Packing Loop
+  // Dynamic Orientation Extraction & Packing
   smoothed_path.poses.reserve(raw_points.size());
 
   for (size_t i = 0; i < raw_points.size(); ++i) {
@@ -321,10 +338,17 @@ nav_msgs::msg::Path StringBezierSmoother::smoothAndDensifyPath(
     if (i < raw_points.size() - 1) {
       double dx = raw_points[i + 1].x - raw_points[i].x;
       double dy = raw_points[i + 1].y - raw_points[i].y;
-      double yaw = std::atan2(dy, dx);
-      pose.pose.orientation = yawToQuaternion(yaw);
+      
+      // Prevent zero-length heading calculations
+      if (std::hypot(dx, dy) > 1e-4) {
+        double yaw = std::atan2(dy, dx);
+        pose.pose.orientation = yawToQuaternion(yaw);
+      } else if (!smoothed_path.poses.empty()) {
+        pose.pose.orientation = smoothed_path.poses.back().pose.orientation;
+      } else {
+        pose.pose.orientation = poses.front().pose.orientation;
+      }
     } else {
-      // Retain goal's exact target orientation
       pose.pose.orientation = poses.back().pose.orientation;
     }
 
