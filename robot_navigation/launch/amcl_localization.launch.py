@@ -45,7 +45,7 @@ def generate_launch_description():
   
   declare_map_name_cmd = DeclareLaunchArgument(
     name='map_name',
-    default_value='bookstore',
+    default_value='hospital',
     description='name of the map yaml file')
    
   declare_costmap_param_name_cmd = DeclareLaunchArgument(

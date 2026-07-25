@@ -218,7 +218,7 @@ class AStarSmoothPlanner(Node):
       (-1, -1, 1.4142),
     ]
     pending_nodes = PriorityQueue()
-    visited_nodes = set()
+    nodes_already_explored = set()
     start_node: GridNode = self.pose_to_grid_node(start_pose)
     goal_node: GridNode = self.pose_to_grid_node(goal_pose)
 
@@ -234,7 +234,7 @@ class AStarSmoothPlanner(Node):
       for dir_x, dir_y, dir_cost in explore_direction:
         new_node: GridNode = active_node + GridNode(dir_x, dir_y)
         if (
-            new_node not in visited_nodes
+            new_node not in nodes_already_explored
             and self.is_grid_node_on_map(new_node)
             and self.is_map_cell_free(new_node) 
             # and self.is_not_close_to_obstacle(new_node)
@@ -243,7 +243,7 @@ class AStarSmoothPlanner(Node):
           new_node.heuristic = self.euclidean_distance(new_node, goal_node)
           new_node.prev = active_node
           pending_nodes.put(new_node)
-          visited_nodes.add(new_node)
+          nodes_already_explored.add(new_node)
 
       self.visited_map_.data[self.grid_node_to_map_data_index(active_node)] = -106 # nice orange color
       self.map_publisher.publish(self.visited_map_)

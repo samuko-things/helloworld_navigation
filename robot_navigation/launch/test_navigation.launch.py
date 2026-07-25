@@ -28,7 +28,7 @@ def generate_launch_description():
   
   declare_map_name_cmd = DeclareLaunchArgument(
       name='map_name',
-      default_value='bookstore',
+      default_value='hospital',
       description='file path to the map needed for navigation'
     )
 
@@ -46,21 +46,6 @@ def generate_launch_description():
 
   #--------------------------------------------------------------------------------
 
-  # test_planner = Node(
-  #   package='robot_navigation',
-  #   executable='a_star_smooth_planner.py',
-  #   name='a_star_smooth_planner',
-  #   output='screen',
-  #   parameters=[
-  #     {
-  #       'obstacle_clearance_radius': 0.4,
-  #       'obstacle_clearance_kernel_size': 8,
-  #       'smoother_corner_cutting_dist': 0.2,
-  #       'smoother_points_per_curve': 20,
-  #       'smoother_line_densification_dist': 0.05
-  #     }
-  #   ],
-  # )
 
   # test_planner = Node(
   #     package='robot_navigation',
@@ -69,12 +54,21 @@ def generate_launch_description():
   #     output='screen',
   #   )
 
+  # test_planner = Node(
+  #       package='robot_navigation',
+  #       # executable='theta_star_planner.py',
+  #       executable='theta_star_planner',
+  #       name='theta_star_planner',
+  #       output='screen',
+  #     )
+
   test_planner = Node(
-        package='robot_navigation',
-        executable='theta_star_planner',
-        name='theta_star_planner',
-        output='screen',
-      )
+          package='robot_navigation',
+          # executable='lazy_theta_star_planner.py',
+          executable='lazy_theta_star_planner',
+          name='lazy_theta_star_planner',
+          output='screen',
+        )
 
   test_controller = Node(
     package='robot_navigation',
