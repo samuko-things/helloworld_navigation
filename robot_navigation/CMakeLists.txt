@@ -36,6 +36,9 @@ ament_target_dependencies(a_star_smooth_planner ${dependencies})
 add_executable(string_bezier_smoother src/string_bezier_smoother.cpp)
 ament_target_dependencies(string_bezier_smoother ${dependencies})
 
+add_executable(theta_star_planner src/theta_star_planner.cpp)
+ament_target_dependencies(theta_star_planner ${dependencies})
+
 install(
   DIRECTORY include
   DESTINATION include
@@ -45,6 +48,7 @@ install(TARGETS
   pure_pursuit_controller
   a_star_smooth_planner
   string_bezier_smoother
+  theta_star_planner
   DESTINATION lib/${PROJECT_NAME}
 )
 #-----------------------------------------------
@@ -55,7 +59,7 @@ ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
   ${PROJECT_NAME}/a_star_smooth_planner.py
-  ${PROJECT_NAME}/lazy_theta_star_planner.py
+  ${PROJECT_NAME}/theta_star_planner.py
   ${PROJECT_NAME}/string_pull_bezier_smoother.py
   ${PROJECT_NAME}/pure_pursuit_controller.py
   DESTINATION lib/${PROJECT_NAME}

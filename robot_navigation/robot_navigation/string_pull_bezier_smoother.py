@@ -5,6 +5,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped, Pose, Quaternion
+from tf_transformations import quaternion_from_euler
 
 from math import hypot, cos, sin, atan2
 import numpy as np
@@ -45,7 +46,7 @@ class StringPullBezierSmoother(Node):
     # send computed path
     self.path_publisher = self.create_publisher(
       Path,
-      "/plan_smooth",
+      "/plan_smoothed",
       default_qos
     )
 
@@ -73,7 +74,7 @@ class StringPullBezierSmoother(Node):
     path.header = npath.header
     path.poses = npath.poses.copy()
 
-    path = self.greedy_string_pull_smooth_iter(path, 20)
+    path = self.greedy_string_pull_smooth_iter(path,10)
     path = self.smooth_and_densify_path(path)
     
     return path
@@ -148,182 +149,208 @@ class StringPullBezierSmoother(Node):
   
 
   def greedy_string_pull_smooth(self, npath: Path) -> Path:
-      poses = npath.poses.copy()
-      smoothed_path = Path()
-      smoothed_path.header = npath.header
-      
-      if len(poses) <= 2:
-          return npath
-  
-      i = 0
-      j = 2
-      n = len(poses)
+    poses = npath.poses.copy()
+    new_poses = npath.poses.copy()
+    new_poses.clear()
+    smoothed_path = Path()
+    smoothed_path.header = npath.header
 
-      while j < n:
-        if self.line_of_sight(self.pose_to_grid_node(poses[i].pose),self.pose_to_grid_node(poses[j].pose)):
-            poses.pop(j-1)
-            n = len(poses)
+    
+    if len(poses) <= 2:
+        self.get_logger().info("nothing")
+        return npath
+
+    i = 0
+    j = 2
+    n = len(poses)
+
+    new_poses.append(poses[i])
+
+    while True:
+        if not (j < n):
+            break
+        elif self.line_of_sight(self.pose_to_grid_node(poses[i].pose),self.pose_to_grid_node(poses[j].pose)):
+            pass
         else:
             i = j-1
-            j = j+1
+            new_poses.append(poses[i])
+        j=j+1
 
-      smoothed_path.poses = poses.copy()
-      return smoothed_path
+    i = j-1
+    new_poses.append(poses[i])
 
+    # self.get_logger().info(f"i={i}, j={j}, n={n}")
+
+    smoothed_path.poses = new_poses.copy()
+    return smoothed_path
+  
   def greedy_string_pull_smooth_iter(self, npath: Path, iter: int) -> Path:
-      path = Path()
-      path.header = npath.header
-      path.poses = npath.poses.copy()
-      
-      for _ in range(iter):
-          path = self.greedy_string_pull_smooth(path)
+    path = Path()
+    path.header = npath.header
+    path.poses = npath.poses.copy()
+    for _ in range(iter):
+        path = self.greedy_string_pull_smooth(path)
 
-      return path
+    return path
   
-
+        
+  
   def compute_bezier_point(self, p0, p1, p2, t):
-      """Calculates a 2D point along a Quadratic Bezier curve at time t."""
-      return (1 - t)**2 * p0 + 2 * (1 - t) * t * p1 + t**2 * p2
-
-
-  def calculate_safe_anchor(self, p_curr, p_neighbor, d):
-      """
-      Calculates the safe anchor point (P0 or P2) along the segment 
-      connecting the current corner node (P1) to its neighbor.
-      """
-      vector = p_neighbor - p_curr
-      length = np.linalg.norm(vector)
-
-      if length == 0.0:
-          return p_curr
-
-      unit_direction = vector / length
-
-      if length >= 2 * d:
-          return p_curr + (d * unit_direction)
-      # elif d <= length < 2 * d:
-      #     return p_curr + (0.5 * vector)
-      else:
-          # return p_neighbor
-          return p_curr + (0.5 * vector)
+    """Calculates a 2D point along a Quadratic Bezier curve at time t."""
+    return (1 - t)**2 * p0 + 2 * (1 - t) * t * p1 + t**2 * p2
   
+  
+  def calculate_safe_anchor(self, p_prev, p_curr, p_next, d):
+    """
+    Calculates the safe anchor point (P0 or P2) along the segment 
+    connecting the current corner node (P1) to its neighbor.
+    """
 
+    vect_prev = p_prev - p_curr
+    len_prev = np.hypot(vect_prev[0], vect_prev[1])
+    u_vect_prev = vect_prev / len_prev
+
+    vect_next = p_next - p_curr
+    len_next = np.hypot(vect_next[0], vect_next[1])
+    u_vect_next = vect_next / len_next
+
+    if (len_prev < 2*d or len_next < 2*d) and (len_prev < len_next):
+        return(p_curr+((0.5*len_prev)*u_vect_prev), p_curr+((0.5*len_prev)*u_vect_next), (0.5*len_prev))
+    
+    elif (len_prev < 2*d or len_next < 2*d) and (len_prev > len_next):
+        return(p_curr+((0.5*len_next)*u_vect_prev), p_curr+((0.5*len_next)*u_vect_next), (0.5*len_next))
+    
+    elif (len_prev < 2*d or len_next < 2*d) and (len_prev == len_next):
+        return(p_curr+((0.5*len_prev)*u_vect_prev), p_curr+((0.5*len_next)*u_vect_next), (0.5*len_prev))
+    
+    else:
+        return(p_curr+(d*u_vect_prev), p_curr+(d*u_vect_next), d)
+  
+    
+  
   def densify_straight_line_segment(self, start_pt: np.ndarray, end_pt: np.ndarray, resolution: float) -> list[np.ndarray]:
-      """
-      Fills in intermediate 2D array points along a straight path segment
-      based on a strict maximum resolution distance metric.
-      """
-      dx = end_pt[0] - start_pt[0]
-      dy = end_pt[1] - start_pt[1]
-      dist = hypot(dx, dy)
+    """
+    Fills in intermediate 2D array points along a straight path segment
+    based on a strict maximum resolution distance metric.
+    """
+    dx = end_pt[0] - start_pt[0]
+    dy = end_pt[1] - start_pt[1]
+    dist = hypot(dx, dy)
 
-      if dist <= resolution:
-          return [end_pt]
+    if dist <= resolution:
+        return [end_pt]
 
-      steps = max(1, int(dist / resolution))
-      segment_points = []
-      
-      for i in range(1, steps + 1):
-          ratio = i / float(steps)
-          interp_pt = np.array([
-              start_pt[0] + dx * ratio,
-              start_pt[1] + dy * ratio
-          ])
-          segment_points.append(interp_pt)
-          
-      return segment_points
-  
+    steps = max(1, int(dist / resolution))
+    segment_points = []
+    
+    for i in range(1, steps + 1):
+        ratio = i / float(steps)
+        interp_pt = np.array([
+            start_pt[0] + dx * ratio,
+            start_pt[1] + dy * ratio
+        ])
+        segment_points.append(interp_pt)
+        
+    return segment_points
+    
   def yaw_to_quaternion(self, yaw: float) -> Quaternion:
     """Converts a yaw angle (radians) to a geometry_msgs/Quaternion."""
     q = Quaternion()
-    q.x = 0.0
-    q.y = 0.0
-    q.z = sin(yaw / 2.0)
-    q.w = cos(yaw / 2.0)
+    [x, y, z, w] = quaternion_from_euler(0.0, 0.0, yaw)
+    q.x = x
+    q.y = y
+    q.z = z
+    q.w = w
     return q
+  
+  
+  def smooth_and_densify_path(self, string_pulled_path: Path, d: float = 0.2, num_points_per_corner: int = 20, resolution: float = 0.05) -> Path:
+    """
+    Rounds the corners of a sparse ROS 2 Path using Quadratic Bezier curves 
+    with dynamically bounded safety margins for P0 and P2.
+    
+    :param string_pulled_path: The input sparse nav_msgs/Path.
+    :param d: The desired corner-cutting distance constraint from P1.
+    :param num_points_per_corner: Number of interpolation points per curve.
+    :param resolution: straight line densification dist segment.
+    """
+    poses = string_pulled_path.poses
+    if len(poses) < 3:
+        return string_pulled_path
 
+    smoothed_path = Path()
+    smoothed_path.header = string_pulled_path.header
+    z_height = poses[0].pose.position.z
+    
+    raw_points = []
+    
+    # 1. Pre-calculate safe curve anchor pairs for every interior waypoint
+    anchors = {}
+    for i in range(1, len(poses) - 1):
+        p_prev = np.array([poses[i-1].pose.position.x, poses[i-1].pose.position.y])
+        p_curr = np.array([poses[i].pose.position.x, poses[i].pose.position.y])
+        p_next = np.array([poses[i+1].pose.position.x, poses[i+1].pose.position.y])
 
-  def smooth_and_densify_path(self, string_pulled_path: Path, d: float = 0.25, num_points_per_corner: int = 15, resolution: float = 0.05) -> Path:
-      """
-      Rounds the corners of a sparse ROS 2 Path using Quadratic Bezier curves 
-      with dynamically bounded safety margins for P0 and P2.
-      
-      :param string_pulled_path: The input sparse nav_msgs/Path.
-      :param d: The desired corner-cutting distance constraint from P1.
-      :param num_points_per_corner: Number of interpolation points per curve.
-      :param resolution: straight line densification dist segment.
-      """
-      poses = string_pulled_path.poses
-      if len(poses) < 3:
-          return string_pulled_path
+        a_prev, a_next, a_dist = self.calculate_safe_anchor(p_prev, p_curr, p_next, d) 
 
-      smoothed_path = Path()
-      smoothed_path.header = string_pulled_path.header
-      z_height = poses[0].pose.position.z
-      
-      raw_points = []
-      
-      # 1. Pre-calculate safe curve anchor pairs for every interior waypoint
-      anchors = {}
-      for i in range(1, len(poses) - 1):
-          p_prev = np.array([poses[i-1].pose.position.x, poses[i-1].pose.position.y])
-          p_curr = np.array([poses[i].pose.position.x, poses[i].pose.position.y])
-          p_next = np.array([poses[i+1].pose.position.x, poses[i+1].pose.position.y])
-          
-          anchors[i] = {
-              'p0': self.calculate_safe_anchor(p_curr, p_prev, d),
-              'p1': p_curr,
-              'p2': self.calculate_safe_anchor(p_curr, p_next, d)
-          }
+        anchors[i] = {
+            'p0': a_prev,
+            'p1': p_curr,
+            'p2': a_next,
+            'd': a_dist
+        }
 
-      # 2. Build the continuous sequential line map coordinates
-      start_pt = np.array([poses[0].pose.position.x, poses[0].pose.position.y])
-      raw_points.append(start_pt)
-      
-      for i in range(1, len(poses) - 1):
-          p0 = anchors[i]['p0']
-          p1 = anchors[i]['p1']
-          p2 = anchors[i]['p2']
-          
-          # Densify straight line segments up to the curve entry point (p0)
-          if np.linalg.norm(raw_points[-1] - p0) > 1e-4:
-              straight_pts = self.densify_straight_line_segment(raw_points[-1], p0, resolution)
-              raw_points.extend(straight_pts)
-              
-          # Draw the curve high-density points
-          for t in np.linspace(1.0 / num_points_per_corner, 1.0, num_points_per_corner):
-              bezier_pt = self.compute_bezier_point(p0, p1, p2, t)
-              if np.linalg.norm(raw_points[-1] - bezier_pt) > 1e-4:
-                  raw_points.append(bezier_pt)
+    # 2. Build the continuous sequential line map coordinates
+    start_pt = np.array([poses[0].pose.position.x, poses[0].pose.position.y])
+    raw_points.append(start_pt)
+    
+    for i in range(1, len(poses) - 1):
+        p0 = anchors[i]['p0']
+        p1 = anchors[i]['p1']
+        p2 = anchors[i]['p2']
+        a_dist = anchors[i]['d']
 
-      # Densify the final straight line segment to the goal coordinate position
-      p_goal = np.array([poses[-1].pose.position.x, poses[-1].pose.position.y])
-      if np.linalg.norm(raw_points[-1] - p_goal) > 1e-4:
-          final_straight_pts = self.densify_straight_line_segment(raw_points[-1], p_goal, resolution)
-          raw_points.extend(final_straight_pts)
+        num_of_points = int((a_dist/d)*num_points_per_corner)
+        
+        # Densify straight line segments up to the curve entry point (p0)
+        if np.linalg.norm(raw_points[-1] - p0) > 1e-4:
+            straight_pts = self.densify_straight_line_segment(raw_points[-1], p0, resolution)
+            raw_points.extend(straight_pts)
+            
+        # Draw the curve high-density points
+        for t in np.linspace(1.0 / num_of_points, 1.0, num_of_points):
+            bezier_pt = self.compute_bezier_point(p0, p1, p2, t)
+            if np.linalg.norm(raw_points[-1] - bezier_pt) > 1e-4:
+                raw_points.append(bezier_pt)
 
-      # 3. Dynamic Orientation Extraction & Packing Loop
-      for i in range(len(raw_points)):
-          pose = PoseStamped()
-          pose.header = smoothed_path.header
-          pose.pose.position.x = float(raw_points[i][0])
-          pose.pose.position.y = float(raw_points[i][1])
-          pose.pose.position.z = z_height
-          
-          if i < len(raw_points) - 1:
-              # Look-ahead heading calculation
-              dx = raw_points[i+1][0] - raw_points[i][0]
-              dy = raw_points[i+1][1] - raw_points[i][1]
-              
-              yaw = atan2(dy, dx)
-              pose.pose.orientation = self.yaw_to_quaternion(yaw)
-          else:
-              # Force the final point to match your commanded goal orientation exactly
-              pose.pose.orientation = poses[-1].pose.orientation
+    # Densify the final straight line segment to the goal coordinate position
+    p_goal = np.array([poses[-1].pose.position.x, poses[-1].pose.position.y])
+    if np.linalg.norm(raw_points[-1] - p_goal) > 1e-4:
+        final_straight_pts = self.densify_straight_line_segment(raw_points[-1], p_goal, resolution)
+        raw_points.extend(final_straight_pts)
 
-          smoothed_path.poses.append(pose)
+    # 3. Dynamic Orientation Extraction & Packing Loop
+    for i in range(len(raw_points)):
+        pose = PoseStamped()
+        pose.header = smoothed_path.header
+        pose.pose.position.x = float(raw_points[i][0])
+        pose.pose.position.y = float(raw_points[i][1])
+        pose.pose.position.z = z_height
+        
+        if i < len(raw_points) - 1:
+            # Look-ahead heading calculation
+            dx = raw_points[i+1][0] - raw_points[i][0]
+            dy = raw_points[i+1][1] - raw_points[i][1]
+            
+            yaw = atan2(dy, dx)
+            pose.pose.orientation = self.yaw_to_quaternion(yaw)
+        else:
+            # Force the final point to match your commanded goal orientation exactly
+            pose.pose.orientation = poses[-1].pose.orientation
 
-      return smoothed_path
+        smoothed_path.poses.append(pose)
+
+    return smoothed_path
 
 
 

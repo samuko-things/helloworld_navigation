@@ -62,12 +62,19 @@ def generate_launch_description():
   #   ],
   # )
 
+  # test_planner = Node(
+  #     package='robot_navigation',
+  #     executable='a_star_smooth_planner.py',
+  #     name='a_star_smooth_planner',
+  #     output='screen',
+  #   )
+
   test_planner = Node(
-      package='robot_navigation',
-      executable='a_star_smooth_planner.py',
-      name='a_star_smooth_planner',
-      output='screen',
-    )
+        package='robot_navigation',
+        executable='theta_star_planner',
+        name='theta_star_planner',
+        output='screen',
+      )
 
   test_controller = Node(
     package='robot_navigation',
@@ -94,6 +101,6 @@ def generate_launch_description():
   # Add the nodes to the launch description
   ld.add_action(amcl_localization_launch)
   ld.add_action(test_planner)
-  ld.add_action(test_controller)
+  # ld.add_action(test_controller)
 
   return ld

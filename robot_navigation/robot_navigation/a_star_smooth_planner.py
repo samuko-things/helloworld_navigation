@@ -192,15 +192,15 @@ class AStarSmoothPlanner(Node):
     map_to_robot_base_pose.position.y = map_to_robot_base_tf.transform.translation.y
     map_to_robot_base_pose.orientation = map_to_robot_base_tf.transform.rotation
 
-    path, p = self.plan(
+    path = self.plan(
       start_pose=map_to_robot_base_pose,
       goal_pose=pose_msg.pose
     )
 
-    if p.poses:
+    if path.poses:
       self.get_logger().info("shortest path found")
       self.path_publisher.publish(path)
-      self.smooth_path_publisher.publish(p)
+      # self.smooth_path_publisher.publish(p)
     else:
       self.get_logger().warn("No path found to the goal")
 
@@ -252,13 +252,14 @@ class AStarSmoothPlanner(Node):
     path.header.frame_id = self.map_.header.frame_id
 
     #construct node from last(goal) to first(start).
-    while active_node and active_node.prev and rclpy.ok():
+    while active_node or active_node.prev and rclpy.ok():
       last_pose: Pose = self.grid_node_to_pose(active_node)
       last_pose_stamped = PoseStamped()
       last_pose_stamped.header.frame_id = self.map_.header.frame_id
       last_pose_stamped.pose = last_pose
       path.poses.append(last_pose_stamped)
       active_node = active_node.prev
+    
 
     # resverse the poses construction from first(start) to last(goal)
 
@@ -266,14 +267,14 @@ class AStarSmoothPlanner(Node):
     # return path
 
     path.poses.reverse()
-    smooth_path = self.greedy_string_pull_smooth_iter(path, 10)
+    smooth_path = self.greedy_string_pull_smooth_iter(path, 5)
     smooth_path_ = self.smooth_and_densify_path(
        string_pulled_path=smooth_path,
        d=self.smoother_corner_cutting_dist,
        num_points_per_corner=self.smoother_points_per_curve,
        resolution=self.smoother_line_densification_dist
     )
-    return smooth_path_, path
+    return smooth_path_
 
 
 
@@ -397,25 +398,38 @@ class AStarSmoothPlanner(Node):
 
   def greedy_string_pull_smooth(self, npath: Path) -> Path:
       poses = npath.poses.copy()
+      new_poses = npath.poses.copy()
+      new_poses.clear()
       smoothed_path = Path()
       smoothed_path.header = npath.header
+
       
       if len(poses) <= 2:
+          self.get_logger().info("nothing")
           return npath
   
       i = 0
       j = 2
       n = len(poses)
 
-      while j < n:
-        if self.line_of_sight(self.pose_to_grid_node(poses[i].pose),self.pose_to_grid_node(poses[j].pose)):
-           poses.pop(j-1)
-           n = len(poses)
-        else:
-           i = j-1
-           j = j+1
+      new_poses.append(poses[i])
 
-      smoothed_path.poses = poses.copy()
+      while True:
+          if not (j < n):
+              break
+          elif self.line_of_sight(self.pose_to_grid_node(poses[i].pose),self.pose_to_grid_node(poses[j].pose)):
+              pass
+          else:
+              i = j-1
+              new_poses.append(poses[i])
+          j=j+1
+          
+      i = j-1
+      new_poses.append(poses[i])
+
+      self.get_logger().info(f"i={i}, j={j}, n={n}")
+
+      smoothed_path.poses = new_poses.copy()
       return smoothed_path
 
   def greedy_string_pull_smooth_iter(self, npath: Path, iter: int) -> Path:
@@ -435,26 +449,53 @@ class AStarSmoothPlanner(Node):
       """Calculates a 2D point along a Quadratic Bezier curve at time t."""
       return (1 - t)**2 * p0 + 2 * (1 - t) * t * p1 + t**2 * p2
 
-  def calculate_safe_anchor(self, p_curr, p_neighbor, d):
+  # def calculate_safe_anchor(self, p_curr, p_neighbor, d):
+  #     """
+  #     Calculates the safe anchor point (P0 or P2) along the segment 
+  #     connecting the current corner node (P1) to its neighbor.
+  #     """
+  #     vector = p_neighbor - p_curr
+  #     length = np.linalg.norm(vector)
+
+  #     if length == 0.0:
+  #         return p_curr
+
+  #     unit_direction = vector / length
+
+  #     if length >= 2 * d:
+  #         return p_curr + (d * unit_direction)
+  #     # elif d <= length < 2 * d:
+  #     #     return p_curr + (0.5 * vector)
+  #     else:
+  #         # return p_neighbor
+  #         return p_curr + (0.5 * vector)
+
+  def calculate_safe_anchor(self, p_prev, p_curr, p_next, d):
       """
       Calculates the safe anchor point (P0 or P2) along the segment 
       connecting the current corner node (P1) to its neighbor.
       """
-      vector = p_neighbor - p_curr
-      length = np.linalg.norm(vector)
 
-      if length == 0.0:
-          return p_curr
+      vect_prev = p_prev - p_curr
+      len_prev = np.hypot(vect_prev[0], vect_prev[1])
+      u_vect_prev = vect_prev / len_prev
 
-      unit_direction = vector / length
+      vect_next = p_next - p_curr
+      len_next = np.hypot(vect_next[0], vect_next[1])
+      u_vect_next = vect_next / len_next
 
-      if length >= 2 * d:
-          return p_curr + (d * unit_direction)
-      # elif d <= length < 2 * d:
-      #     return p_curr + (0.5 * vector)
+      if (len_prev < 2*d or len_next < 2*d) and (len_prev < len_next):
+        return(p_curr+((0.5*len_prev)*u_vect_prev), p_curr+((0.5*len_prev)*u_vect_next), (0.5*len_prev))
+      
+      elif (len_prev < 2*d or len_next < 2*d) and (len_prev > len_next):
+        return(p_curr+((0.5*len_next)*u_vect_prev), p_curr+((0.5*len_next)*u_vect_next), (0.5*len_next))
+      
+      elif (len_prev < 2*d or len_next < 2*d) and (len_prev == len_next):
+        return(p_curr+((0.5*len_prev)*u_vect_prev), p_curr+((0.5*len_next)*u_vect_next), (0.5*len_prev))
+      
       else:
-          # return p_neighbor
-          return p_curr + (0.5 * vector)
+        return(p_curr+(d*u_vect_prev), p_curr+(d*u_vect_next), d)
+
   
 
   def densify_straight_line_segment(self, start_pt: np.ndarray, end_pt: np.ndarray, resolution: float) -> list[np.ndarray]:
@@ -519,12 +560,21 @@ class AStarSmoothPlanner(Node):
           p_prev = np.array([poses[i-1].pose.position.x, poses[i-1].pose.position.y])
           p_curr = np.array([poses[i].pose.position.x, poses[i].pose.position.y])
           p_next = np.array([poses[i+1].pose.position.x, poses[i+1].pose.position.y])
-          
+
+          a_prev, a_next, a_dist = self.calculate_safe_anchor(p_prev, p_curr, p_next, d) 
+
           anchors[i] = {
-              'p0': self.calculate_safe_anchor(p_curr, p_prev, d),
+              'p0': a_prev,
               'p1': p_curr,
-              'p2': self.calculate_safe_anchor(p_curr, p_next, d)
+              'p2': a_next,
+              'd': a_dist
           }
+
+          # anchors[i] = {
+          #     'p0': self.calculate_safe_anchor(p_curr, p_prev, d),
+          #     'p1': p_curr,
+          #     'p2': self.calculate_safe_anchor(p_curr, p_next, d)
+          # }
 
       # 2. Build the continuous sequential line map coordinates
       start_pt = np.array([poses[0].pose.position.x, poses[0].pose.position.y])
@@ -534,6 +584,9 @@ class AStarSmoothPlanner(Node):
           p0 = anchors[i]['p0']
           p1 = anchors[i]['p1']
           p2 = anchors[i]['p2']
+          a_dist = anchors[i]['d']
+
+          num_of_points = int((a_dist/d)*num_points_per_corner)
           
           # Densify straight line segments up to the curve entry point (p0)
           if np.linalg.norm(raw_points[-1] - p0) > 1e-4:
@@ -541,7 +594,7 @@ class AStarSmoothPlanner(Node):
               raw_points.extend(straight_pts)
               
           # Draw the curve high-density points
-          for t in np.linspace(1.0 / num_points_per_corner, 1.0, num_points_per_corner):
+          for t in np.linspace(1.0 / num_of_points, 1.0, num_of_points):
               bezier_pt = self.compute_bezier_point(p0, p1, p2, t)
               if np.linalg.norm(raw_points[-1] - bezier_pt) > 1e-4:
                   raw_points.append(bezier_pt)
