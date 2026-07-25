@@ -141,12 +141,23 @@ nav_msgs::msg::Path LazyThetaStarPlanner::plan(const geometry_msgs::msg::Pose &s
     if (visited[active_idx]) {
       continue;
     }
+
+    // LAZY THETA STAR -> try to shortcut active node to active.prev.prev (its grand parent)
+    if(active_node->prev && active_node->prev->prev){
+      auto grandparent = active_node->prev->prev;
+      if (lineOfSight(*active_node, *grandparent)) {
+          active_node->prev = grandparent;
+          active_node->g_cost = grandparent->g_cost + euclidean_distance(*active_node, *grandparent);
+      }
+    }
+
     visited[active_idx] = true;
 
     if (*active_node == *goal_node) {
       break;
     }
 
+    // -------- NEIGBHOR EXPANSION -------------
     for (const auto &dir : explore_directions) {
       // Uses your GridNode + std::pair operator!
       GridNode neighbor_pos = *active_node + dir.dir; 
@@ -156,19 +167,18 @@ nav_msgs::msg::Path LazyThetaStarPlanner::plan(const geometry_msgs::msg::Pose &s
         
         auto new_node = std::make_shared<GridNode>(neighbor_pos);
 
-        // Check Theta* Line of Sight
-        if (active_node->prev && lineOfSight(*new_node, *(active_node->prev))) {
-          // Point directly to grandparent (preserves real memory pointer)
-          new_node->prev = active_node->prev;
+        // Always set initial candidate parent to active_node
+        new_node->prev = active_node;
+
+        // Optimistic cost: Assume we can shortcut through active_node's parent if available
+        if (active_node->prev){
           new_node->g_cost = active_node->prev->g_cost 
-                           + euclidean_distance(*new_node, *(active_node->prev)) 
-                           + map_->data.at(neighbor_idx);
+                            + euclidean_distance(*new_node, *(active_node->prev)) 
+                            + map_->data.at(neighbor_idx);
         } else {
-          // Standard step to parent
-          new_node->prev = active_node;
           new_node->g_cost = active_node->g_cost 
-                           + dir.t_cost 
-                           + map_->data.at(neighbor_idx);
+                            + dir.t_cost
+                            + map_->data.at(neighbor_idx);
         }
 
         new_node->h_cost = euclidean_distance(*new_node, *goal_node);

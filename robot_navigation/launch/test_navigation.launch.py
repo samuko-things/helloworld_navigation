@@ -28,7 +28,7 @@ def generate_launch_description():
   
   declare_map_name_cmd = DeclareLaunchArgument(
       name='map_name',
-      default_value='hospital',
+      default_value='bookstore',
       description='file path to the map needed for navigation'
     )
 
@@ -54,21 +54,22 @@ def generate_launch_description():
   #     output='screen',
   #   )
 
-  # test_planner = Node(
-  #       package='robot_navigation',
-  #       # executable='theta_star_planner.py',
-  #       executable='theta_star_planner',
-  #       name='theta_star_planner',
-  #       output='screen',
-  #     )
-
   test_planner = Node(
-          package='robot_navigation',
-          # executable='lazy_theta_star_planner.py',
-          executable='lazy_theta_star_planner',
-          name='lazy_theta_star_planner',
-          output='screen',
-        )
+        package='robot_navigation',
+        # executable='theta_star_planner.py',
+        executable='theta_star_planner',
+        name='theta_star_planner',
+        output='screen',
+        parameters=[{'use_lazy': True}]
+      )
+
+  # test_planner = Node(
+  #         package='robot_navigation',
+  #         # executable='lazy_theta_star_planner.py',
+  #         executable='lazy_theta_star_planner',
+  #         name='lazy_theta_star_planner',
+  #         output='screen',
+  #       )
 
   test_controller = Node(
     package='robot_navigation',

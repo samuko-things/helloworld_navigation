@@ -22,8 +22,8 @@ def generate_launch_description():
   x_pos = 0.0; y_pos = 1.0; z_pos = 1.0; yaw = 0.0
 
   # world_file_name = 'empty'
-  # world_file_name = 'bookstore'
-  world_file_name = 'hospital'
+  world_file_name = 'bookstore'
+#   world_file_name = 'hospital'
  
   #--------------------------------------------------------------------------
 
