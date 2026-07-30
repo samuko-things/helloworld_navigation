@@ -1,15 +1,12 @@
-#include "robot_navigation/theta_star_planner.hpp"
+#include "robot_navigation/lazy_theta_star_planner.hpp"
 #include <chrono>
 
 
-namespace theta_star_planner
+namespace lazy_theta_star_planner
 {
 
-ThetaStarPlanner::ThetaStarPlanner() : Node("theta_star_planner"), use_lazy_(true)
+LazyThetaStarPlanner::LazyThetaStarPlanner() : Node("lazy_theta_star_planner")
 {
-  declare_parameter<bool>("use_lazy", use_lazy_);
-  use_lazy_ = get_parameter("use_lazy").as_bool();
-
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
@@ -22,13 +19,13 @@ ThetaStarPlanner::ThetaStarPlanner() : Node("theta_star_planner"), use_lazy_(tru
   map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
     "/costmap",
     map_qos,
-    std::bind(&ThetaStarPlanner::mapCallback, this, std::placeholders::_1)
+    std::bind(&LazyThetaStarPlanner::mapCallback, this, std::placeholders::_1)
   );
 
   goal_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
     "/goal_pose",
     default_qos,
-    std::bind(&ThetaStarPlanner::goalPoseCallback, this, std::placeholders::_1)
+    std::bind(&LazyThetaStarPlanner::goalPoseCallback, this, std::placeholders::_1)
   );
 
   path_pub_ = create_publisher<nav_msgs::msg::Path>(
@@ -41,15 +38,11 @@ ThetaStarPlanner::ThetaStarPlanner() : Node("theta_star_planner"), use_lazy_(tru
     default_qos
   );
 
-  if (use_lazy_){
-    RCLCPP_INFO_STREAM(get_logger(), "ThetaStarPlanner Node Has Started Successfully using Lazy Plan");
-  } else {
-    RCLCPP_INFO_STREAM(get_logger(), "ThetaStarPlanner Node Has Started Successfully using Basic Plan");
-  }
+  RCLCPP_INFO_STREAM(get_logger(), "LazyThetaStarPlanner Node Has Started Successfully");
 
 }
 
-void ThetaStarPlanner::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr map)
+void LazyThetaStarPlanner::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr map)
 {
  map_ = map;
  visited_map_.header.frame_id = map->header.frame_id;
@@ -59,7 +52,7 @@ void ThetaStarPlanner::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr
 //  RCLCPP_INFO_STREAM(get_logger(), "Map Recieved");
 }
 
-void ThetaStarPlanner::goalPoseCallback(const geometry_msgs::msg::PoseStamped::SharedPtr pose)
+void LazyThetaStarPlanner::goalPoseCallback(const geometry_msgs::msg::PoseStamped::SharedPtr pose)
 {
  if(!map_){
   RCLCPP_ERROR(get_logger(), "No Map Received");
@@ -90,13 +83,8 @@ void ThetaStarPlanner::goalPoseCallback(const geometry_msgs::msg::PoseStamped::S
  robot_pose_in_map.position.z = robot_pose_in_map_tf.transform.translation.z;
  robot_pose_in_map.orientation = robot_pose_in_map_tf.transform.rotation;
 
- nav_msgs::msg::Path path;
 
- if (use_lazy_){
-  path = lazy_plan(robot_pose_in_map, pose->pose);
- } else {
-  path = basic_plan(robot_pose_in_map, pose->pose);
- }
+ nav_msgs::msg::Path path = plan(robot_pose_in_map, pose->pose);
 
  if(!path.poses.empty()){
   RCLCPP_INFO_STREAM(get_logger(), "Shortest Path Found");
@@ -108,113 +96,7 @@ void ThetaStarPlanner::goalPoseCallback(const geometry_msgs::msg::PoseStamped::S
 
 }
 
-nav_msgs::msg::Path ThetaStarPlanner::basic_plan(const geometry_msgs::msg::Pose &start, const geometry_msgs::msg::Pose &goal)
-{
-  auto start_time = std::chrono::steady_clock::now();
-
-  std::vector<DirNode> explore_directions = {
-      DirNode({-1, 0}, 1.0), 
-      DirNode({1, 0}, 1.0), 
-      DirNode({0, 1}, 1.0), 
-      DirNode({0, -1}, 1.0),
-      DirNode({-1, 1}, 1.4142), 
-      DirNode({1, -1}, 1.4142), 
-      DirNode({1, 1}, 1.4142), 
-      DirNode({-1, -1}, 1.4142),
-  };
-
-  // Comparator comparing dereferenced shared pointers using your > operator
-  auto comp = [](const std::shared_ptr<GridNode>& a, const std::shared_ptr<GridNode>& b) {
-    return *a > *b;
-  };
-
-  std::priority_queue<
-    std::shared_ptr<GridNode>, 
-    std::vector<std::shared_ptr<GridNode>>, 
-    decltype(comp)
-  > nodes_to_explore(comp);
-
-  int map_size = map_->info.width * map_->info.height;
-  std::vector<bool> visited(map_size, false);
-
-  auto start_node = std::make_shared<GridNode>(poseToGridNode(start));
-  auto goal_node = std::make_shared<GridNode>(poseToGridNode(goal));
-
-  start_node->h_cost = euclidean_distance(*start_node, *goal_node);
-  nodes_to_explore.push(start_node);
-
-  std::shared_ptr<GridNode> active_node = nullptr;
-
-  while (!nodes_to_explore.empty() && rclcpp::ok()) {
-    active_node = nodes_to_explore.top();
-    nodes_to_explore.pop();
-    
-    int active_idx = gridNodeToMapIndex(*active_node);
-    if (visited[active_idx]) {
-      continue;
-    }
-    visited[active_idx] = true;
-
-    if (*active_node == *goal_node) {
-      break;
-    }
-
-    for (const auto &dir : explore_directions) {
-      // Uses your GridNode + std::pair operator!
-      GridNode neighbor_pos = *active_node + dir.dir; 
-      int neighbor_idx = gridNodeToMapIndex(neighbor_pos);
-
-      if (!visited[neighbor_idx] && isGridNodeOnMap(neighbor_pos) && isMapCellFree(neighbor_pos)) {
-        
-        auto new_node = std::make_shared<GridNode>(neighbor_pos);
-
-        // Check Theta* Line of Sight
-        if (active_node->prev && lineOfSight(*new_node, *(active_node->prev))) {
-          // Point directly to grandparent (preserves real memory pointer)
-          new_node->prev = active_node->prev;
-          new_node->g_cost = active_node->prev->g_cost 
-                           + euclidean_distance(*new_node, *(active_node->prev)) 
-                           + map_->data.at(neighbor_idx);
-        } else {
-          // Standard step to parent
-          new_node->prev = active_node;
-          new_node->g_cost = active_node->g_cost 
-                           + dir.t_cost 
-                           + map_->data.at(neighbor_idx);
-        }
-
-        new_node->h_cost = euclidean_distance(*new_node, *goal_node);
-        nodes_to_explore.push(new_node);
-      }
-    }
-  }
-
-  auto end_time = std::chrono::steady_clock::now();
-
-  std::chrono::duration<double> diff_sec = end_time - start_time;
-  RCLCPP_INFO_STREAM(this->get_logger(), "planning_time(BASIC) = " << static_cast<int>(diff_sec.count()*1000) << " ms");
-
-  // Reconstruction
-  nav_msgs::msg::Path path;
-  path.header.frame_id = map_->header.frame_id;
-  path.header.stamp = now();
-
-  auto curr_node = active_node;
-  while (curr_node && rclcpp::ok()) {
-    geometry_msgs::msg::PoseStamped pose_stamped;
-    pose_stamped.header.frame_id = map_->header.frame_id;
-    pose_stamped.header.stamp = path.header.stamp;
-    pose_stamped.pose = gridNodeToPose(*curr_node);
-    
-    path.poses.push_back(pose_stamped);
-    curr_node = curr_node->prev; // Traces shared_ptr back safely
-  }
-
-  std::reverse(path.poses.begin(), path.poses.end());
-  return path;
-}
-
-nav_msgs::msg::Path ThetaStarPlanner::lazy_plan(const geometry_msgs::msg::Pose &start, const geometry_msgs::msg::Pose &goal)
+nav_msgs::msg::Path LazyThetaStarPlanner::plan(const geometry_msgs::msg::Pose &start, const geometry_msgs::msg::Pose &goal)
 {
   auto start_time = std::chrono::steady_clock::now();
 
@@ -308,7 +190,7 @@ nav_msgs::msg::Path ThetaStarPlanner::lazy_plan(const geometry_msgs::msg::Pose &
   auto end_time = std::chrono::steady_clock::now();
 
   std::chrono::duration<double> diff_sec = end_time - start_time;
-  RCLCPP_INFO_STREAM(this->get_logger(), "planning_time(LAZY) = " << static_cast<int>(diff_sec.count()*1000) << " ms");
+  RCLCPP_INFO_STREAM(this->get_logger(), "planning_time = " << static_cast<int>(diff_sec.count()*1000) << " ms");
 
   // Reconstruction
   nav_msgs::msg::Path path;
@@ -330,15 +212,14 @@ nav_msgs::msg::Path ThetaStarPlanner::lazy_plan(const geometry_msgs::msg::Pose &
   return path;
 }
 
-
-GridNode ThetaStarPlanner::poseToGridNode(const geometry_msgs::msg::Pose &pose)
+GridNode LazyThetaStarPlanner::poseToGridNode(const geometry_msgs::msg::Pose &pose)
 {
   int grid_x =static_cast<int>((pose.position.x - map_->info.origin.position.x) / map_->info.resolution);
   int grid_y =static_cast<int>((pose.position.y - map_->info.origin.position.y) / map_->info.resolution);
   return GridNode(grid_x, grid_y);
 }
 
-geometry_msgs::msg::Pose ThetaStarPlanner::gridNodeToPose(const GridNode &grid_node)
+geometry_msgs::msg::Pose LazyThetaStarPlanner::gridNodeToPose(const GridNode &grid_node)
 {
   geometry_msgs::msg::Pose pose;
   pose.position.x = grid_node.x * map_->info.resolution + map_->info.origin.position.x;
@@ -346,33 +227,33 @@ geometry_msgs::msg::Pose ThetaStarPlanner::gridNodeToPose(const GridNode &grid_n
   return pose;
 }
 
-bool ThetaStarPlanner::isGridNodeOnMap(const GridNode &grid_node)
+bool LazyThetaStarPlanner::isGridNodeOnMap(const GridNode &grid_node)
 {
   return (grid_node.x >=0 && grid_node.x < static_cast<int>(map_->info.width)) && 
     (grid_node.y >=0 && grid_node.y < static_cast<int>(map_->info.height));
 }
 
-bool ThetaStarPlanner::isMapCellFree(const GridNode &grid_node)
+bool LazyThetaStarPlanner::isMapCellFree(const GridNode &grid_node)
 {
   return (map_->data.at(gridNodeToMapIndex(grid_node)) >= 0) && (map_->data.at(gridNodeToMapIndex(grid_node)) < 99);
 }
 
-int ThetaStarPlanner::gridNodeToMapIndex(const GridNode &grid_node)
+int LazyThetaStarPlanner::gridNodeToMapIndex(const GridNode &grid_node)
 {
   return static_cast<int>(grid_node.y * map_->info.width + grid_node.x);
 }
 
-double ThetaStarPlanner::euclidean_distance(const GridNode &a, const GridNode &b){
+double LazyThetaStarPlanner::euclidean_distance(const GridNode &a, const GridNode &b){
   return std::hypot(a.x - b.x, a.y - b.y);
 }
 
-double ThetaStarPlanner::octile_distance(const GridNode &a, const GridNode &b){
+double LazyThetaStarPlanner::octile_distance(const GridNode &a, const GridNode &b){
   int dx = std::abs(a.x - b.x);
   int dy = std::abs(a.y - b.y);
   return (dx + dy) - 0.58578644 * std::min(dx, dy);
 }
 
-bool ThetaStarPlanner::lineOfSight(const GridNode &start, const GridNode &end)
+bool LazyThetaStarPlanner::lineOfSight(const GridNode &start, const GridNode &end)
 {
   int x0 = start.x; int y0 = start.y;
   int x1 = end.x; int y1 = end.y;
@@ -427,7 +308,7 @@ bool ThetaStarPlanner::lineOfSight(const GridNode &start, const GridNode &end)
 int main(int argc, char *argv[])
 {
   rclcpp::init(argc, argv);
-  auto node = std::make_shared<theta_star_planner::ThetaStarPlanner>();
+  auto node = std::make_shared<lazy_theta_star_planner::LazyThetaStarPlanner>();
   rclcpp::spin(node);
   rclcpp::shutdown();
   return 0;

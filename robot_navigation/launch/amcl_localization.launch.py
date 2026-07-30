@@ -22,7 +22,7 @@ def generate_launch_description():
   lifecycle_nodes = [
     "map_server",
     "amcl",
-    "costmap"
+    # "costmap"
   ]
 
   #--------------------------------------------------------------------------
@@ -45,7 +45,7 @@ def generate_launch_description():
   
   declare_map_name_cmd = DeclareLaunchArgument(
     name='map_name',
-    default_value='bookstore',
+    default_value='hospital',
     description='name of the map yaml file')
    
   declare_costmap_param_name_cmd = DeclareLaunchArgument(
@@ -140,7 +140,7 @@ def generate_launch_description():
   # Add the nodes to the launch description
   ld.add_action(nav2_map_server)
   ld.add_action(nav2_amcl)
-  ld.add_action(nav2_costmap_2d)
+  # ld.add_action(nav2_costmap_2d)
   ld.add_action(nav2_lifecycle_manager)
 
  

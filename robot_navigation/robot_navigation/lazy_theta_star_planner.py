@@ -35,9 +35,9 @@ class GridNode:
     )
 
 
-class ThetaStarPlanner(Node):
+class LazyThetaStarPlanner(Node):
   def __init__(self):
-    super().__init__("theta_star_planner")
+    super().__init__("lazy_theta_star_planner")
 
     default_qos = QoSProfile(depth=10)
 
@@ -84,7 +84,7 @@ class ThetaStarPlanner(Node):
 
     self.obs_dir = None
 
-    self.get_logger().info("ThetaStarPlanner Node Has Started Successfully")
+    self.get_logger().info("LazyThetaStarPlanner Node Has Started Successfully")
 
 
   def map_callback(self, map_msg: OccupancyGrid):
@@ -137,84 +137,136 @@ class ThetaStarPlanner(Node):
 
   def plan(self, start_pose: Pose, goal_pose: Pose) -> Path:
     explore_direction = [
-      #(x_dir, y_dir, cost)
-      (-1, 0, 1), 
-      (1, 0, 1), 
-      (0, 1, 1), 
-      (0, -1, 1),
-      (-1, 1, 1.4142), 
-      (1, -1, 1.4142), 
-      (1, 1, 1.4142), 
-      (-1, -1, 1.4142),
+        # (dx, dy, dist)
+        (-1,  0, 1.0),
+        ( 1,  0, 1.0),
+        ( 0, -1, 1.0),
+        ( 0,  1, 1.0),
+        (-1, -1, 1.4142),
+        (-1,  1, 1.4142),
+        ( 1, -1, 1.4142),
+        ( 1,  1, 1.4142),
     ]
 
     nodes_to_explore = PriorityQueue()
     nodes_already_explored = set()
 
+    # Dictionary mapping (x, y) coordinates to persistent GridNode objects
+    nodes_map = {}
+
     start_node: GridNode = self.pose_to_grid_node(start_pose)
     goal_node: GridNode = self.pose_to_grid_node(goal_pose)
 
+    start_node.cost = 0.0
     start_node.heuristic = self.euclidean_distance(start_node, goal_node)
+    start_node.prev = start_node
+
+    nodes_map[(start_node.x, start_node.y)] = start_node
     nodes_to_explore.put(start_node)
 
     start_time = time.time_ns()
+    active_node = None
 
     while not nodes_to_explore.empty() and rclpy.ok():
-      active_node: GridNode = nodes_to_explore.get()
+        active_node = nodes_to_explore.get()
 
-      if active_node in nodes_already_explored:
-        continue
-      nodes_already_explored.add(active_node)
+        if active_node in nodes_already_explored:
+            continue
 
-      if active_node == goal_node:
-        break
+        # --------------------------------------------------
+        # LAZY VALIDATION PHASE
+        # --------------------------------------------------
+        if active_node.prev and active_node.prev != active_node:
+            if not self.line_of_sight(active_node.prev, active_node):
+                min_g = float('inf')
+                best_parent = None
 
-      for dir_x, dir_y, dir_cost in explore_direction:
-        new_node: GridNode = active_node + GridNode(dir_x, dir_y)
-        if (
-            new_node not in nodes_already_explored
-            and self.is_grid_node_on_map(new_node)
-            and self.is_map_cell_free(new_node) 
-          ):
-          if active_node == start_node:
-            new_node.prev = active_node
-            new_node.cost = active_node.cost + dir_cost # + self.map_.data[self.grid_node_to_map_data_index(new_node)]
-            new_node.heuristic = self.euclidean_distance(new_node, goal_node)
-          elif self.line_of_sight(new_node, active_node.prev):
-            parent_node = active_node.prev
-            new_node.prev = parent_node
-            new_node.cost = parent_node.cost + self.euclidean_distance(new_node, parent_node) # + self.map_.data[self.grid_node_to_map_data_index(new_node)]
-            new_node.heuristic = self.euclidean_distance(new_node, goal_node)
-          else:
-            new_node.prev = active_node
-            new_node.cost = active_node.cost + dir_cost # + self.map_.data[self.grid_node_to_map_data_index(new_node)]
-            new_node.heuristic = self.euclidean_distance(new_node, goal_node)
+                # Recalculate cost using valid, already-explored neighbors
+                for dx, dy, t_cost in explore_direction:
+                    nx, ny = active_node.x + dx, active_node.y + dy
 
-          nodes_to_explore.put(new_node)
+                    if (nx, ny) in nodes_map:
+                        neighbor_node = nodes_map[(nx, ny)]
 
-      self.visited_map_.data[self.grid_node_to_map_data_index(active_node)] = 10 # nice orange color
-      self.map_publisher.publish(self.visited_map_)
+                        if neighbor_node in nodes_already_explored:
+                            cost_to_current = neighbor_node.cost + t_cost
+                            
+                            if cost_to_current < min_g:
+                                min_g = cost_to_current
+                                best_parent = neighbor_node
 
-    dt = int((time.time_ns() - start_time)/1000000)
+                if best_parent:
+                    active_node.cost = min_g
+                    active_node.prev = best_parent
+                    # Re-queue so it re-sorts in the priority queue under its corrected cost
+                    nodes_to_explore.put(active_node)
+                    continue
+                else:
+                    nodes_already_explored.add(active_node)
+                    continue
+
+        # --------------------------------------------------
+        # GOAL CHECK
+        # --------------------------------------------------
+        if active_node == goal_node:
+            break
+
+        nodes_already_explored.add(active_node)
+
+        # --------------------------------------------------
+        # EXPAND NEIGHBORS
+        # --------------------------------------------------
+        for dir_x, dir_y, t_cost in explore_direction:
+            nx, ny = active_node.x + dir_x, active_node.y + dir_y
+
+            # Retrieve existing persistent node or initialize a new one
+            if (nx, ny) not in nodes_map:
+                nodes_map[(nx, ny)] = GridNode(nx, ny, cost=float('inf'))
+
+            neighbor_node = nodes_map[(nx, ny)]
+
+            if (
+                neighbor_node not in nodes_already_explored
+                and self.is_grid_node_on_map(neighbor_node)
+                and self.is_map_cell_free(neighbor_node) 
+            ):
+
+                # Optimistic assumption: line of sight from parent to neighbor exists
+                parent = active_node.prev if active_node.prev else active_node
+                new_cost = parent.cost + self.euclidean_distance(parent, neighbor_node)
+
+                if new_cost < neighbor_node.cost:
+                    neighbor_node.cost = new_cost
+                    neighbor_node.heuristic = self.euclidean_distance(neighbor_node, goal_node)
+                    neighbor_node.prev = parent
+
+                    nodes_to_explore.put(neighbor_node)
+
+        self.visited_map_.data[self.grid_node_to_map_data_index(active_node)] = 10
+        self.map_publisher.publish(self.visited_map_)
+
+    dt = int((time.time_ns() - start_time) / 1000000)
     self.get_logger().info(f"planning_time = {dt} ms")
-    
+
+    # --------------------------------------------------
+    # PATH RECONSTRUCTION
+    # --------------------------------------------------
     path = Path()
     path.header.frame_id = self.map_.header.frame_id
 
-    #construct node from last(goal) to first(start).
     while active_node and rclpy.ok():
-      last_pose: Pose = self.grid_node_to_pose(active_node)
-      last_pose_stamped = PoseStamped()
-      last_pose_stamped.header.frame_id = self.map_.header.frame_id
-      last_pose_stamped.pose = last_pose
-      path.poses.append(last_pose_stamped)
-      active_node = active_node.prev
+        last_pose: Pose = self.grid_node_to_pose(active_node)
+        last_pose_stamped = PoseStamped()
+        last_pose_stamped.header.frame_id = self.map_.header.frame_id
+        last_pose_stamped.pose = last_pose
+        path.poses.append(last_pose_stamped)
 
-    # resverse the poses construction from first(start) to last(goal)
+        if active_node.prev == active_node:
+            break
+        active_node = active_node.prev
 
     path.poses.reverse()
     return path
-
 
 
 
@@ -254,7 +306,7 @@ class ThetaStarPlanner(Node):
     dx = abs(node.x - goal_node.x)
     dy = abs(node.y - goal_node.y)
     return (dx + dy) - 0.58578644 * min(dx, dy)
-
+  
 
   def line_of_sight(self, start: GridNode, end: GridNode) -> bool:
     """
@@ -310,7 +362,7 @@ class ThetaStarPlanner(Node):
 
 def main():
   rclpy.init()
-  node = ThetaStarPlanner()
+  node = LazyThetaStarPlanner()
   rclpy.spin(node)
   node.destroy_node()
   rclpy.shutdown()

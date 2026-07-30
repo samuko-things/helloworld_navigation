@@ -46,32 +46,12 @@ def generate_launch_description():
 
   #--------------------------------------------------------------------------------
 
-  # test_planner = Node(
-  #   package='robot_navigation',
-  #   executable='a_star_smooth_planner.py',
-  #   name='a_star_smooth_planner',
-  #   output='screen',
-  #   parameters=[
-  #     {
-  #       'obstacle_clearance_radius': 0.4,
-  #       'obstacle_clearance_kernel_size': 8,
-  #       'smoother_corner_cutting_dist': 0.2,
-  #       'smoother_points_per_curve': 20,
-  #       'smoother_line_densification_dist': 0.05
-  #     }
-  #   ],
-  # )
-
-  # test_planner = Node(
-  #     package='robot_navigation',
-  #     executable='a_star_smooth_planner.py',
-  #     name='a_star_smooth_planner',
-  #     output='screen',
-  #   )
-
   test_planner = Node(
         package='robot_navigation',
-        executable='theta_star_planner',
+        # executable='theta_star_planner.py',
+        # executable='drp_theta_star_planner.py',
+        # executable='lazy_theta_star_planner.py',
+        executable='a_star_smooth_planner.py',
         name='theta_star_planner',
         output='screen',
       )

@@ -18,7 +18,7 @@
 #include <algorithm>
 #include <queue>
 
-namespace theta_star_planner
+namespace lazy_theta_star_planner
 {
 
 struct GridNode
@@ -68,14 +68,12 @@ struct DirNode
 };
 
 
-class ThetaStarPlanner : public rclcpp::Node
+class LazyThetaStarPlanner : public rclcpp::Node
 {
 public:
-  ThetaStarPlanner();
+  LazyThetaStarPlanner();
 
 private:
-  bool use_lazy_ = true;
-
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pose_sub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
@@ -105,8 +103,7 @@ private:
 
   bool lineOfSight(const GridNode &start, const GridNode &end);
 
-  nav_msgs::msg::Path basic_plan(const geometry_msgs::msg::Pose &start, const geometry_msgs::msg::Pose &goal);
-  nav_msgs::msg::Path lazy_plan(const geometry_msgs::msg::Pose &start, const geometry_msgs::msg::Pose &goal);
+  nav_msgs::msg::Path plan(const geometry_msgs::msg::Pose &start, const geometry_msgs::msg::Pose &goal);
 
 };
 
