@@ -7,9 +7,10 @@ from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped, Pose
 from tf2_ros import Buffer, TransformListener, LookupException
 
-from queue import PriorityQueue
+from queue import PriorityQueue, Queue
 from math import hypot
 import time
+
 
 class GridNode:
   def __init__(self, x, y, cost=0, heuristic=0, prev=None):
@@ -35,9 +36,9 @@ class GridNode:
     )
 
 
-class LazyThetaStarPlanner(Node):
+class DRPThetaStarPlanner(Node):
   def __init__(self):
-    super().__init__("lazy_theta_star_planner")
+    super().__init__("drp_theta_star_planner")
 
     default_qos = QoSProfile(depth=10)
 
@@ -84,7 +85,7 @@ class LazyThetaStarPlanner(Node):
 
     self.obs_dir = None
 
-    self.get_logger().info("LazyThetaStarPlanner Node Has Started Successfully")
+    self.get_logger().info("DRPThetaStarPlanner Node Has Started Successfully")
 
 
   def map_callback(self, map_msg: OccupancyGrid):
@@ -135,138 +136,99 @@ class LazyThetaStarPlanner(Node):
       self.get_logger().warn("No path found to the goal")
 
 
+
+
+#-----------------------------------------------------------------------------------
+
   def plan(self, start_pose: Pose, goal_pose: Pose) -> Path:
-    explore_direction = [
-        # (dx, dy, dist)
-        (-1,  0, 1.0),
-        ( 1,  0, 1.0),
-        ( 0, -1, 1.0),
-        ( 0,  1, 1.0),
+      explore_direction = [
+        #(x_dir, y_dir, cost)
+        (-1, 0, 1), 
+        (1, 0, 1), 
+        (0, 1, 1), 
+        (0, -1, 1),
+        (-1, 1, 1.4142), 
+        (1, -1, 1.4142), 
+        (1, 1, 1.4142), 
         (-1, -1, 1.4142),
-        (-1,  1, 1.4142),
-        ( 1, -1, 1.4142),
-        ( 1,  1, 1.4142),
-    ]
+      ]
+  
+      nodes_to_explore = PriorityQueue()
+      nodes_already_explored = set()
 
-    nodes_to_explore = PriorityQueue()
-    nodes_already_explored = set()
+      start_node: GridNode = self.pose_to_grid_node(start_pose)
+      goal_node: GridNode = self.pose_to_grid_node(goal_pose)
 
-    # Dictionary mapping (x, y) coordinates to persistent GridNode objects
-    nodes_map = {}
+      start_node.cost = 0
+      start_node.heuristic = self.euclidean_distance(start_node, goal_node)
+      nodes_to_explore.put(start_node)
 
-    start_node: GridNode = self.pose_to_grid_node(start_pose)
-    goal_node: GridNode = self.pose_to_grid_node(goal_pose)
+      active_node = None
 
-    start_node.cost = 0.0
-    start_node.heuristic = self.euclidean_distance(start_node, goal_node)
-    start_node.prev = start_node
+      start_time = time.time_ns()
 
-    nodes_map[(start_node.x, start_node.y)] = start_node
-    nodes_to_explore.put(start_node)
-
-    start_time = time.time_ns()
-    active_node = None
-
-    while not nodes_to_explore.empty() and rclpy.ok():
+      while not nodes_to_explore.empty() and rclpy.ok():
         active_node = nodes_to_explore.get()
 
         if active_node in nodes_already_explored:
-            continue
+          continue
 
-        # --------------------------------------------------
-        # LAZY VALIDATION PHASE
-        # --------------------------------------------------
-        if active_node.prev and active_node.prev != active_node:
-            if not self.line_of_sight(active_node.prev, active_node):
-                min_g = float('inf')
-                best_parent = None
-
-                # Recalculate cost using valid, already-explored neighbors
-                for dx, dy, t_cost in explore_direction:
-                    nx, ny = active_node.x + dx, active_node.y + dy
-
-                    if (nx, ny) in nodes_map:
-                        neighbor_node = nodes_map[(nx, ny)]
-
-                        if neighbor_node in nodes_already_explored:
-                            cost_to_current = neighbor_node.cost + t_cost
-                            
-                            if cost_to_current < min_g:
-                                min_g = cost_to_current
-                                best_parent = neighbor_node
-
-                if best_parent:
-                    active_node.cost = min_g
-                    active_node.prev = best_parent
-                    # Re-queue so it re-sorts in the priority queue under its corrected cost
-                    nodes_to_explore.put(active_node)
-                    continue
-                else:
-                    nodes_already_explored.add(active_node)
-                    continue
-
-        # --------------------------------------------------
-        # GOAL CHECK
-        # --------------------------------------------------
-        if active_node == goal_node:
-            break
+        if active_node.prev and active_node.prev.prev:
+          grandparent = active_node.prev.prev
+          if self.line_of_sight(active_node, grandparent):
+            active_node.prev = grandparent
+            active_node.cost = grandparent.cost + self.euclidean_distance(active_node, grandparent) # + self.map_.data[self.grid_node_to_map_data_index(new_node)]
+            # nodes_to_explore = PriorityQueue()
 
         nodes_already_explored.add(active_node)
 
-        # --------------------------------------------------
-        # EXPAND NEIGHBORS
-        # --------------------------------------------------
-        for dir_x, dir_y, t_cost in explore_direction:
-            nx, ny = active_node.x + dir_x, active_node.y + dir_y
+        if active_node == goal_node:
+          break
 
-            # Retrieve existing persistent node or initialize a new one
-            if (nx, ny) not in nodes_map:
-                nodes_map[(nx, ny)] = GridNode(nx, ny, cost=float('inf'))
-
-            neighbor_node = nodes_map[(nx, ny)]
-
-            if (
-                neighbor_node not in nodes_already_explored
-                and self.is_grid_node_on_map(neighbor_node)
-                and self.is_map_cell_free(neighbor_node) 
+        # --- NEIGHBOR EXPANSION ---
+        for dir_x, dir_y, dir_cost in explore_direction:
+          new_node: GridNode = active_node + GridNode(dir_x, dir_y)
+          
+          if (
+              new_node not in nodes_already_explored
+              and self.is_grid_node_on_map(new_node)
+              and self.is_map_cell_free(new_node) 
             ):
+            
+            # Always set initial candidate parent to active_node
+            new_node.prev = active_node
+            
+            # Optimistic cost: Assume we can shortcut through active_node's parent if available
+            if active_node.prev:
+              new_node.cost = active_node.prev.cost + self.euclidean_distance(new_node, active_node.prev) # + self.map_.data[self.grid_node_to_map_data_index(new_node)]
+            else:
+              new_node.cost = active_node.cost + dir_cost # + self.map_.data[self.grid_node_to_map_data_index(new_node)]
 
-                # Optimistic assumption: line of sight from parent to neighbor exists
-                parent = active_node.prev if active_node.prev else active_node
-                new_cost = parent.cost + self.euclidean_distance(parent, neighbor_node)
-
-                if new_cost < neighbor_node.cost:
-                    neighbor_node.cost = new_cost
-                    neighbor_node.heuristic = self.euclidean_distance(neighbor_node, goal_node)
-                    neighbor_node.prev = parent
-
-                    nodes_to_explore.put(neighbor_node)
+            # new_node.cost = active_node.cost + dir_cost # + self.map_.data[self.grid_node_to_map_data_index(new_node)]
+            new_node.heuristic = self.euclidean_distance(new_node, goal_node)
+            nodes_to_explore.put(new_node)
 
         self.visited_map_.data[self.grid_node_to_map_data_index(active_node)] = 10
         self.map_publisher.publish(self.visited_map_)
 
-    dt = int((time.time_ns() - start_time) / 1000000)
-    self.get_logger().info(f"planning_time = {dt} ms")
+      dt = int((time.time_ns() - start_time)/1000000)
+      self.get_logger().info(f"planning_time = {dt} ms")
 
-    # --------------------------------------------------
-    # PATH RECONSTRUCTION
-    # --------------------------------------------------
-    path = Path()
-    path.header.frame_id = self.map_.header.frame_id
+      path = Path()
+      path.header.frame_id = self.map_.header.frame_id
 
-    while active_node and rclpy.ok():
+      while active_node and rclpy.ok():
         last_pose: Pose = self.grid_node_to_pose(active_node)
         last_pose_stamped = PoseStamped()
         last_pose_stamped.header.frame_id = self.map_.header.frame_id
         last_pose_stamped.pose = last_pose
         path.poses.append(last_pose_stamped)
-
-        if active_node.prev == active_node:
-            break
         active_node = active_node.prev
 
-    path.poses.reverse()
-    return path
+      path.poses.reverse()
+      return path
+
+#----------------------------------------------------------------------------------------------
 
 
 
@@ -306,7 +268,7 @@ class LazyThetaStarPlanner(Node):
     dx = abs(node.x - goal_node.x)
     dy = abs(node.y - goal_node.y)
     return (dx + dy) - 0.58578644 * min(dx, dy)
-  
+
 
   def line_of_sight(self, start: GridNode, end: GridNode) -> bool:
     """
@@ -362,7 +324,7 @@ class LazyThetaStarPlanner(Node):
 
 def main():
   rclpy.init()
-  node = LazyThetaStarPlanner()
+  node = DRPThetaStarPlanner()
   rclpy.spin(node)
   node.destroy_node()
   rclpy.shutdown()

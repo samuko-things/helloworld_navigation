@@ -65,6 +65,7 @@ install(PROGRAMS
   ${PROJECT_NAME}/a_star_smooth_planner.py
   ${PROJECT_NAME}/theta_star_planner.py
   ${PROJECT_NAME}/lazy_theta_star_planner.py
+  ${PROJECT_NAME}/drp_theta_star_planner.py
   ${PROJECT_NAME}/string_pull_bezier_smoother.py
   ${PROJECT_NAME}/pure_pursuit_controller.py
   DESTINATION lib/${PROJECT_NAME}

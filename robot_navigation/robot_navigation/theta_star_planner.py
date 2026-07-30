@@ -48,7 +48,8 @@ class ThetaStarPlanner(Node):
     # read incomming map
     self.map_subscriber = self.create_subscription(
       OccupancyGrid,
-      "/costmap",
+      # "/costmap",
+      "/map",
       self.map_callback,
       map_qos
     )
@@ -177,22 +178,22 @@ class ThetaStarPlanner(Node):
           ):
           if active_node == start_node:
             new_node.prev = active_node
-            new_node.cost = active_node.cost + dir_cost + self.map_.data[self.grid_node_to_map_data_index(new_node)]
+            new_node.cost = active_node.cost + dir_cost # + self.map_.data[self.grid_node_to_map_data_index(new_node)]
             new_node.heuristic = self.euclidean_distance(new_node, goal_node)
           elif self.line_of_sight(new_node, active_node.prev):
             parent_node = active_node.prev
             new_node.prev = parent_node
-            new_node.cost = parent_node.cost + self.euclidean_distance(new_node, parent_node) + self.map_.data[self.grid_node_to_map_data_index(new_node)]
+            new_node.cost = parent_node.cost + self.euclidean_distance(new_node, parent_node) # + self.map_.data[self.grid_node_to_map_data_index(new_node)]
             new_node.heuristic = self.euclidean_distance(new_node, goal_node)
           else:
             new_node.prev = active_node
-            new_node.cost = active_node.cost + dir_cost + self.map_.data[self.grid_node_to_map_data_index(new_node)]
+            new_node.cost = active_node.cost + dir_cost # + self.map_.data[self.grid_node_to_map_data_index(new_node)]
             new_node.heuristic = self.euclidean_distance(new_node, goal_node)
 
           nodes_to_explore.put(new_node)
 
-      # self.visited_map_.data[self.grid_node_to_map_data_index(active_node)] = 10 # nice orange color
-      # self.map_publisher.publish(self.visited_map_)
+      self.visited_map_.data[self.grid_node_to_map_data_index(active_node)] = 10 # nice orange color
+      self.map_publisher.publish(self.visited_map_)
 
     dt = int((time.time_ns() - start_time)/1000000)
     self.get_logger().info(f"planning_time = {dt} ms")
@@ -234,7 +235,8 @@ class ThetaStarPlanner(Node):
     return (0 <= node.x < self.map_.info.width) and (0 <= node.y < self.map_.info.height)
   
   def is_map_cell_free(self, node: GridNode) -> bool:
-    return (self.map_.data[self.grid_node_to_map_data_index(node)] >= 0) and (self.map_.data[self.grid_node_to_map_data_index(node)] < 99)
+    # return (self.map_.data[self.grid_node_to_map_data_index(node)] >= 0) and (self.map_.data[self.grid_node_to_map_data_index(node)] < 99)
+    return self.map_.data[self.grid_node_to_map_data_index(node)] == 0
 
   def grid_node_to_map_data_index(self, node: GridNode) -> int:
     """ convert graph node into the corresponding index of the ros2 occupancy grid vector data index (array)"""
@@ -252,52 +254,6 @@ class ThetaStarPlanner(Node):
     dx = abs(node.x - goal_node.x)
     dy = abs(node.y - goal_node.y)
     return (dx + dy) - 0.58578644 * min(dx, dy)
-  
-
-  # def bresenham_line(self, start: GridNode, end: GridNode):
-  #   x0, y0 = start.x, start.y
-  #   x1, y1 = end.x, end.y
-
-  #   dx = abs(x1 - x0)
-  #   dy = abs(y1 - y0)
-
-  #   sx = 1 if x0 < x1 else -1
-  #   sy = 1 if y0 < y1 else -1
-
-  #   err = dx - dy
-  #   line = []
-
-  #   while True:
-  #     line.append((x0, y0))
-
-  #     if x0 == x1 and y0 == y1:
-  #         break
-
-  #     e2 = 2 * err
-  #     if e2 > -dy:
-  #         err -= dy
-  #         x0 += sx
-  #     if e2 < dx:
-  #         err += dx
-  #         y0 += sy
-
-  #   return line
-  
-  # def line_crosses_obstacle(self, line) -> bool:
-  #   for x, y in line:
-  #       grid_node = GridNode(x, y) 
-  #       if not self.is_grid_node_on_map(grid_node):
-  #           return True
-  #       # if (not self.is_map_cell_free(grid_node)) or (not self.is_not_close_to_obstacle(grid_node)):
-  #       if not (self.map_.data[self.grid_node_to_map_data_index(grid_node)] == 0):
-  #           return True
-  #   return False
-
-  # def line_of_sight(self, start: GridNode, end: GridNode) -> bool:
-  #     if start == end:
-  #         return True
-  #     line = self.bresenham_line(start, end)
-  #     return not self.line_crosses_obstacle(line)
 
 
   def line_of_sight(self, start: GridNode, end: GridNode) -> bool:

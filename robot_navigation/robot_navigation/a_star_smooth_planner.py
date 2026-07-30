@@ -68,7 +68,7 @@ class AStarSmoothPlanner(Node):
     # read incomming map
     self.map_subscriber = self.create_subscription(
       OccupancyGrid,
-      "/costmap",
+      "/map",
       self.map_callback,
       map_qos
     )
@@ -84,21 +84,21 @@ class AStarSmoothPlanner(Node):
     # send computed path
     self.path_publisher = self.create_publisher(
       Path,
-      "/a_star/path",
-      default_qos
-    )
-
-    # send computed path
-    self.smooth_path_publisher = self.create_publisher(
-      Path,
       "/theta_star/path",
       default_qos
     )
 
+    # send computed path
+    # self.smooth_path_publisher = self.create_publisher(
+    #   Path,
+    #   "/theta_star/path",
+    #   default_qos
+    # )
+
     # send new map for visualization
     self.map_publisher = self.create_publisher(
       OccupancyGrid,
-      "/a_star/visited_map",
+      "/theta_star/visited_map",
       default_qos
     )
 
@@ -205,76 +205,202 @@ class AStarSmoothPlanner(Node):
       self.get_logger().warn("No path found to the goal")
 
 
+  # def plan(self, start_pose: Pose, goal_pose: Pose) -> Path:
+  #   explore_direction = [
+  #     #(x_dir, y_dir, cost)
+  #     (-1, 0, 1), 
+  #     (1, 0, 1), 
+  #     (0, 1, 1), 
+  #     (0, -1, 1),
+  #     (-1, 1, 1.4142), 
+  #     (1, -1, 1.4142), 
+  #     (1, 1, 1.4142), 
+  #     (-1, -1, 1.4142),
+  #   ]
+  #   pending_nodes = PriorityQueue()
+  #   nodes_already_explored = set()
+  #   start_node: GridNode = self.pose_to_grid_node(start_pose)
+  #   goal_node: GridNode = self.pose_to_grid_node(goal_pose)
+
+  #   start_node.cost = 0
+  #   start_node.heuristic = self.euclidean_distance(start_node, goal_node)
+  #   pending_nodes.put(start_node)
+
+  #   active_node = None
+
+  #   while not pending_nodes.empty() and rclpy.ok():
+  #     active_node: GridNode = pending_nodes.get()
+
+  #     if active_node in nodes_already_explored:
+  #       continue
+  #     nodes_already_explored.add(active_node)
+
+  #     if active_node == goal_node:
+  #       break
+
+  #     for dir_x, dir_y, dir_cost in explore_direction:
+  #       new_node: GridNode = active_node + GridNode(dir_x, dir_y)
+  #       if (
+  #           new_node not in nodes_already_explored
+  #           and self.is_grid_node_on_map(new_node)
+  #           and self.is_map_cell_free(new_node) 
+  #           # and self.is_not_close_to_obstacle(new_node)
+  #         ):
+  #         new_node.cost = active_node.cost + dir_cost # + self.map_.data[self.grid_node_to_map_data_index(new_node)]
+  #         new_node.heuristic = self.euclidean_distance(new_node, goal_node)
+  #         new_node.prev = active_node
+  #         pending_nodes.put(new_node)
+
+  #     self.visited_map_.data[self.grid_node_to_map_data_index(active_node)] = -106 # nice orange color
+  #     self.map_publisher.publish(self.visited_map_)
+
+  #   path = Path()
+  #   path.header.frame_id = self.map_.header.frame_id
+
+  #   #construct node from last(goal) to first(start).
+  #   while active_node and rclpy.ok():
+  #     last_pose: Pose = self.grid_node_to_pose(active_node)
+  #     last_pose_stamped = PoseStamped()
+  #     last_pose_stamped.header.frame_id = self.map_.header.frame_id
+  #     last_pose_stamped.pose = last_pose
+  #     path.poses.append(last_pose_stamped)
+  #     active_node = active_node.prev
+
+  #   # resverse the poses construction from first(start) to last(goal)
+  #   path.poses.reverse()
+  #   return path
+
+  #   # path.poses.reverse()
+  #   # smooth_path = self.greedy_string_pull_smooth_iter(path, 5)
+  #   # smooth_path_ = self.smooth_and_densify_path(
+  #   #    string_pulled_path=smooth_path,
+  #   #    d=self.smoother_corner_cutting_dist,
+  #   #    num_points_per_corner=self.smoother_points_per_curve,
+  #   #    resolution=self.smoother_line_densification_dist
+  #   # )
+  #   # return smooth_path_
+
+  
+
   def plan(self, start_pose: Pose, goal_pose: Pose) -> Path:
     explore_direction = [
-      #(x_dir, y_dir, cost)
-      (-1, 0, 1), 
-      (1, 0, 1), 
-      (0, 1, 1), 
-      (0, -1, 1),
-      (-1, 1, 1.4142), 
-      (1, -1, 1.4142), 
-      (1, 1, 1.4142), 
-      (-1, -1, 1.4142),
+      (-1, 0, 1), (1, 0, 1), (0, 1, 1), (0, -1, 1),
+      (-1, 1, 1.4142), (1, -1, 1.4142), (1, 1, 1.4142), (-1, -1, 1.4142),
     ]
-    pending_nodes = PriorityQueue()
-    nodes_already_explored = set()
+
+    # Queues for both directions
+    pending_fwd = PriorityQueue()
+    pending_bwd = PriorityQueue()
+
+    # Dictionaries mapping GridNode -> GridNode (stores updated cost & prev pointers)
+    visited_fwd = {}
+    visited_bwd = {}
+
     start_node: GridNode = self.pose_to_grid_node(start_pose)
     goal_node: GridNode = self.pose_to_grid_node(goal_pose)
 
+    # Initialize Forward Search
+    start_node.cost = 0
     start_node.heuristic = self.euclidean_distance(start_node, goal_node)
-    pending_nodes.put(start_node)
+    pending_fwd.put(start_node)
+    visited_fwd[start_node] = start_node
 
-    while not pending_nodes.empty() and rclpy.ok():
-      active_node: GridNode = pending_nodes.get()
+    # Initialize Backward Search
+    goal_node.cost = 0
+    goal_node.heuristic = self.euclidean_distance(goal_node, start_node)
+    pending_bwd.put(goal_node)
+    visited_bwd[goal_node] = goal_node
 
-      if active_node == goal_node:
+    meeting_node_fwd = None
+    meeting_node_bwd = None
+
+    while not pending_fwd.empty() and not pending_bwd.empty() and rclpy.ok():
+      
+      # ----------------------------------------------------------------------
+      # 1. FORWARD STEP (Start -> Goal)
+      # ----------------------------------------------------------------------
+      active_fwd: GridNode = pending_fwd.get()
+
+      # Check if forward search met backward search
+      if active_fwd in visited_bwd:
+        meeting_node_fwd = active_fwd
+        meeting_node_bwd = visited_bwd[active_fwd]
         break
 
       for dir_x, dir_y, dir_cost in explore_direction:
-        new_node: GridNode = active_node + GridNode(dir_x, dir_y)
-        if (
-            new_node not in nodes_already_explored
-            and self.is_grid_node_on_map(new_node)
-            and self.is_map_cell_free(new_node) 
-            # and self.is_not_close_to_obstacle(new_node)
-          ):
-          new_node.cost = active_node.cost + dir_cost + self.map_.data[self.grid_node_to_map_data_index(new_node)]
-          new_node.heuristic = self.euclidean_distance(new_node, goal_node)
-          new_node.prev = active_node
-          pending_nodes.put(new_node)
-          nodes_already_explored.add(new_node)
+        new_node: GridNode = active_fwd + GridNode(dir_x, dir_y)
 
-      self.visited_map_.data[self.grid_node_to_map_data_index(active_node)] = -106 # nice orange color
+        if self.is_grid_node_on_map(new_node) and self.is_map_cell_free(new_node):
+          new_cost = active_fwd.cost + dir_cost
+
+          if new_node not in visited_fwd or new_cost < visited_fwd[new_node].cost:
+            new_node.cost = new_cost
+            new_node.heuristic = self.euclidean_distance(new_node, goal_node)
+            new_node.prev = active_fwd
+            
+            visited_fwd[new_node] = new_node
+            pending_fwd.put(new_node)
+
+      self.visited_map_.data[self.grid_node_to_map_data_index(active_fwd)] = -106
       self.map_publisher.publish(self.visited_map_)
 
+      # ----------------------------------------------------------------------
+      # 2. BACKWARD STEP (Goal -> Start)
+      # ----------------------------------------------------------------------
+      active_bwd: GridNode = pending_bwd.get()
+
+      # Check if backward search met forward search
+      if active_bwd in visited_fwd:
+        meeting_node_fwd = visited_fwd[active_bwd]
+        meeting_node_bwd = active_bwd
+        break
+
+      for dir_x, dir_y, dir_cost in explore_direction:
+        new_node: GridNode = active_bwd + GridNode(dir_x, dir_y)
+
+        if self.is_grid_node_on_map(new_node) and self.is_map_cell_free(new_node):
+          new_cost = active_bwd.cost + dir_cost
+
+          if new_node not in visited_bwd or new_cost < visited_bwd[new_node].cost:
+            new_node.cost = new_cost
+            new_node.heuristic = self.euclidean_distance(new_node, start_node)
+            new_node.prev = active_bwd
+            
+            visited_bwd[new_node] = new_node
+            pending_bwd.put(new_node)
+
+      self.visited_map_.data[self.grid_node_to_map_data_index(active_bwd)] = -106
+      self.map_publisher.publish(self.visited_map_)
+
+    # ----------------------------------------------------------------------
+    # 3. PATH RECONSTRUCTION (Stitch Forward & Backward Paths)
+    # ----------------------------------------------------------------------
+    fwd_nodes = []
+    curr = meeting_node_fwd
+    while curr:
+      fwd_nodes.append(curr)
+      curr = curr.prev
+    fwd_nodes.reverse() # Start -> Meeting Node
+
+    bwd_nodes = []
+    curr = meeting_node_bwd.prev if meeting_node_bwd else None
+    while curr:
+      bwd_nodes.append(curr)
+      curr = curr.prev # Meeting Node -> Goal
+
+    full_grid_path = fwd_nodes + bwd_nodes
+
+    # Convert GridNodes to ROS Path message
     path = Path()
     path.header.frame_id = self.map_.header.frame_id
 
-    #construct node from last(goal) to first(start).
-    while active_node or active_node.prev and rclpy.ok():
-      last_pose: Pose = self.grid_node_to_pose(active_node)
+    for node in full_grid_path:
       last_pose_stamped = PoseStamped()
       last_pose_stamped.header.frame_id = self.map_.header.frame_id
-      last_pose_stamped.pose = last_pose
+      last_pose_stamped.pose = self.grid_node_to_pose(node)
       path.poses.append(last_pose_stamped)
-      active_node = active_node.prev
-    
 
-    # resverse the poses construction from first(start) to last(goal)
-
-    # path.poses.reverse()
-    # return path
-
-    path.poses.reverse()
-    smooth_path = self.greedy_string_pull_smooth_iter(path, 5)
-    smooth_path_ = self.smooth_and_densify_path(
-       string_pulled_path=smooth_path,
-       d=self.smoother_corner_cutting_dist,
-       num_points_per_corner=self.smoother_points_per_curve,
-       resolution=self.smoother_line_densification_dist
-    )
-    return smooth_path_
+    return path
 
 
 
@@ -296,7 +422,8 @@ class AStarSmoothPlanner(Node):
     return (0 <= node.x < self.map_.info.width) and (0 <= node.y < self.map_.info.height)
   
   def is_map_cell_free(self, node: GridNode) -> bool:
-    return (self.map_.data[self.grid_node_to_map_data_index(node)] >= 0) and (self.map_.data[self.grid_node_to_map_data_index(node)] < 99)
+    # return (self.map_.data[self.grid_node_to_map_data_index(node)] >= 0) and (self.map_.data[self.grid_node_to_map_data_index(node)] < 99)
+    return self.map_.data[self.grid_node_to_map_data_index(node)] == 0
   
   def is_not_close_to_obstacle(self, node: GridNode) -> bool:
     for dir_x, dir_y in self.obs_dir:

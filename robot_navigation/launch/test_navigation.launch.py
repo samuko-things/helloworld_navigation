@@ -46,30 +46,15 @@ def generate_launch_description():
 
   #--------------------------------------------------------------------------------
 
-
-  # test_planner = Node(
-  #     package='robot_navigation',
-  #     executable='a_star_smooth_planner.py',
-  #     name='a_star_smooth_planner',
-  #     output='screen',
-  #   )
-
   test_planner = Node(
         package='robot_navigation',
         # executable='theta_star_planner.py',
-        executable='theta_star_planner',
+        # executable='drp_theta_star_planner.py',
+        # executable='lazy_theta_star_planner.py',
+        executable='a_star_smooth_planner.py',
         name='theta_star_planner',
         output='screen',
-        parameters=[{'use_lazy': True}]
       )
-
-  # test_planner = Node(
-  #         package='robot_navigation',
-  #         # executable='lazy_theta_star_planner.py',
-  #         executable='lazy_theta_star_planner',
-  #         name='lazy_theta_star_planner',
-  #         output='screen',
-  #       )
 
   test_controller = Node(
     package='robot_navigation',

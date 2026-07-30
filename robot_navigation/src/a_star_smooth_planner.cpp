@@ -150,6 +150,12 @@ nav_msgs::msg::Path AStarSmoothPlanner::plan(const geometry_msgs::msg::Pose &sta
 
   }
 
+  struct PrecomputedDir {
+  int offset;
+  int dx, dy;
+  float cost;
+};
+
   nav_msgs::msg::Path path;
   path.header.frame_id = map_->header.frame_id;
   while(active_node.prev && rclcpp::ok()) {
