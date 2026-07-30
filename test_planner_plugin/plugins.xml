@@ -1,0 +1,11 @@
+<class_libraries>
+  <library path="test_planner_plugin">
+    <class
+      type="test_planner_plugin::TestPlanner"
+      base_class_type="nav2_core::GlobalPlanner">
+      <description>
+        Test Planner.
+      </description>
+    </class>
+  </library>
+</class_libraries>
