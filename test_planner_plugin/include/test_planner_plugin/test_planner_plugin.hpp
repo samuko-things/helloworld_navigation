@@ -115,16 +115,38 @@ public:
     std::function<bool()> cancel_checker) override;
 
 protected:
-  // GridNode* runLazyThetaStar(
-  //   GridNode* start_node,
-  //   GridNode* goal_node,
-  //   const std::function<bool()>& cancel_checker,
-  //   const unsigned char* char_map,
-  //   int size_x);
 
   std::shared_ptr<GridNode> runTestPlan(
     std::shared_ptr<GridNode> start_node,
     std::shared_ptr<GridNode> goal_node,
+    const std::function<bool()>& cancel_checker,
+    const unsigned char* char_map,
+    unsigned int size_x);
+
+  std::shared_ptr<GridNode> runThetaStarPlan(
+    std::shared_ptr<GridNode> start_node,
+    std::shared_ptr<GridNode> goal_node,
+    const std::function<bool()>& cancel_checker,
+    const unsigned char* char_map,
+    unsigned int size_x);
+
+  std::shared_ptr<GridNode> runLazyThetaStarPlan(
+    std::shared_ptr<GridNode> start_node,
+    std::shared_ptr<GridNode> goal_node,
+    const std::function<bool()>& cancel_checker,
+    const unsigned char* char_map,
+    unsigned int size_x);
+
+  std::shared_ptr<GridNode> runAStarPlan(
+    std::shared_ptr<GridNode> start_node,
+    std::shared_ptr<GridNode> goal_node,
+    const std::function<bool()>& cancel_checker,
+    const unsigned char* char_map,
+    unsigned int size_x,
+    bool smooth=true);
+
+  std::shared_ptr<GridNode> greedyStringPullSmooth(
+    std::shared_ptr<GridNode> grid_node_path,
     const std::function<bool()>& cancel_checker,
     const unsigned char* char_map,
     unsigned int size_x);
@@ -159,6 +181,8 @@ protected:
   CostmapMeta costmap_meta_;
 
   double cost_limit_{99.0};
+
+  std::string planner_name_{"test"};
 
   rclcpp::Logger logger_{rclcpp::get_logger("TestPlanner")};
 };

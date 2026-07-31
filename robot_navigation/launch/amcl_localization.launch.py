@@ -99,16 +99,16 @@ def generate_launch_description():
             ],
     )
 
-  nav2_costmap_2d = Node(
-    package='nav2_costmap_2d',
-    executable='nav2_costmap_2d',
-    name='costmap',
-    output='screen',
-    parameters=[
-            costmap_param_path,
-            {"use_sim_time": use_sim_time}
-        ],
-  )
+  # nav2_costmap_2d = Node(
+  #   package='nav2_costmap_2d',
+  #   executable='nav2_costmap_2d',
+  #   name='costmap',
+  #   output='screen',
+  #   parameters=[
+  #           costmap_param_path,
+  #           {"use_sim_time": use_sim_time}
+  #       ],
+  # )
 
   
 
