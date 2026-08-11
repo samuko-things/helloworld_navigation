@@ -1,0 +1,9 @@
+<class_libraries>
+  <library path="test_smoother_plugin">
+    <class type="test_smoother_plugin::TestSmoother" base_class_type="nav2_core::Smoother">
+      <description>
+        A* LOS-based path smoother for Nav2, preserves collision safety.
+      </description>
+    </class>
+  </library>
+</class_libraries>
