@@ -1,0 +1,20 @@
+services:
+  hello_nav_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hello_nav:latest
+    container_name: hello_nav_container
+    network_mode: "host"
+    ipc: "host"
+    privileged: true
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /dev:/dev
+    devices:
+      - /dev/dri:/dev/dri  # Grants access to Intel/AMD integrated graphics
+    stdin_open: true       # Corresponds to -i flag (keeps stdin open)
+    tty: true              # Corresponds to -t flag (allocates a pseudo-TTY)
