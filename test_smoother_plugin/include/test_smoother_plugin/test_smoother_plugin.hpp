@@ -17,6 +17,11 @@
 #include "rclcpp/rclcpp.hpp"
 #include "tf2_ros/buffer.h"
 
+// Required for Euler (yaw) to Quaternion conversions
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2/utils.h>
+
 namespace test_smoother_plugin
 {
 
@@ -27,6 +32,22 @@ struct GridNode
 
   GridNode(int x_in, int y_in) : x(x_in), y(y_in)
   {}
+};
+
+struct Point2D {
+  double x{0.0};
+  double y{0.0};
+
+  Point2D operator+(const Point2D& other) const { return {x + other.x, y + other.y}; }
+  Point2D operator-(const Point2D& other) const { return {x - other.x, y - other.y}; }
+  Point2D operator*(double scalar) const { return {x * scalar, y * scalar}; }
+};
+
+struct BezierAnchor {
+  Point2D p0;
+  Point2D p1;
+  Point2D p2;
+  double a_dist;
 };
 
 
@@ -96,13 +117,8 @@ protected:
     const geometry_msgs::msg::PoseStamped & end,
     double resolution);
 
-  nav_msgs::msg::Path fillUpPath(const nav_msgs::msg::Path & path);
-
-  nav_msgs::msg::Path laplacianSmooth(
-    const nav_msgs::msg::Path & path,
-    const unsigned char* char_map);
-
-  void updateOrientations(nav_msgs::msg::Path & path);
+  // --- NEW: Quadratic Bézier Smoother ---
+  nav_msgs::msg::Path smoothStringPulledPath(const nav_msgs::msg::Path & input_path);
 
   std::shared_ptr<nav2_costmap_2d::CostmapSubscriber> costmap_sub_;
 
@@ -111,10 +127,13 @@ protected:
   int cost_limit_;
   int iterations_;
 
-  double w_data_;
-  double w_smooth_;
-  double tolerance_;
-  int max_its_;
+  int chaikin_iterations_;
+  double target_spacing_;
+  double min_segment_dist_;
+
+  // // --- NEW: Bézier parameters ---
+  // double max_radius_{0.5};     // Maximum setback distance in meters
+  // int curve_resolution_{8};    // Samples per Bézier curve
 
   rclcpp::Logger logger_{rclcpp::get_logger("TestSmoother")};
 };

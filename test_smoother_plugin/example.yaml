@@ -8,11 +8,11 @@ smoother_server:
     smoother_plugins: ["simple_smoother"]
     simple_smoother:
       plugin: "test_smoother_plugin::TestSmoother"
-      iterations: 1
       cost_limit: 20
-      
-      # Laplacian Relaxation Parameters
-      w_data: 0.2         # Weight to stay close to original path (range: 0.1 - 0.3)
-      w_smooth: 0.3       # Weight to pull toward neighbors / round corners (range: 0.2 - 0.4)
-      tolerance: 1e-4     # Convergence threshold (meters)
-      max_its: 200        # Max relaxation iterations
+
+      # max_radius: 0.5          # Maximum curve setback distance in meters
+      # curve_resolution: 8      # Number of sample points per Bézier curve
+
+      chaikin_iterations: 3
+      target_spacing: 0.05        # Waypoint spacing in meters
+      min_segment_dist: 0.10      # Minimum edge length required for Chaikin cuts
