@@ -319,7 +319,7 @@ Visualization Manager:
       Binary representation: false
       Binary threshold: 100
       Class: rviz_default_plugins/Map
-      Color Scheme: map
+      Color Scheme: costmap
       Draw Behind: false
       Enabled: true
       Name: LocalCostMap
@@ -347,7 +347,7 @@ Visualization Manager:
       Head Length: 0.20000000298023224
       Length: 0.30000001192092896
       Line Style: Billboards
-      Line Width: 0.05000000074505806
+      Line Width: 0.03999999910593033
       Name: Path
       Offset:
         X: 0
@@ -375,7 +375,7 @@ Visualization Manager:
       Head Length: 0.20000000298023224
       Length: 0.30000001192092896
       Line Style: Billboards
-      Line Width: 0.029999999329447746
+      Line Width: 0.03999999910593033
       Name: PathSmooth
       Offset:
         X: 0
@@ -462,11 +462,11 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 72.6777114868164
+      Scale: 77.28378295898438
       Target Frame: <Fixed Frame>
       Value: TopDownOrtho (rviz_default_plugins)
-      X: 1.4157737493515015
-      Y: -0.1736399233341217
+      X: 1.7315175533294678
+      Y: 0.33481043577194214
     Saved: ~
 Window Geometry:
   Displays:

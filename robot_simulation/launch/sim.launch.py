@@ -6,7 +6,7 @@ from launch.actions import (
   ExecuteProcess,
   IncludeLaunchDescription,
   SetEnvironmentVariable)
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -45,12 +45,18 @@ def generate_launch_description():
   #--------------------------------------------------------------------------
  
   # Launch configuration variables specific to simulation
+  headless = LaunchConfiguration('headless')
   use_sim_time = LaunchConfiguration('use_sim_time')
   world_name = LaunchConfiguration('world_name')
   gz_verbosity = LaunchConfiguration('gz_verbosity')
   robot_name = LaunchConfiguration('robot_name')
   use_rviz = LaunchConfiguration('use_rviz')
-     
+
+  declare_headless_cmd = DeclareLaunchArgument(
+    name='headless',
+    default_value='True',
+    description='Whether to run only gzserver')
+  
   declare_use_sim_time_cmd = DeclareLaunchArgument(
     name='use_sim_time',
     default_value='True',
@@ -94,8 +100,17 @@ def generate_launch_description():
   )
 
   start_gz_sim = ExecuteProcess(
+      condition=UnlessCondition(headless),
       cmd=['gz', 'sim',  '-r', '-v', gz_verbosity, world_path],
       output='screen',
+      # shell=False,
+  )
+        
+  start_gz_sim_headless = ExecuteProcess(
+      condition=IfCondition(headless),
+      cmd=['gz', 'sim',  '-r', '-v', gz_verbosity, '-s', '--headless-rendering', world_path],
+      output='screen',
+      # shell=False,
   )
         
   gz_bridge_config_file_path = os.path.join(robot_sim_pkg_path, 'config', 'gz_bridge_config.yaml')
@@ -157,6 +172,7 @@ def generate_launch_description():
   ld.add_action(set_env_gz_sim_path_cmd)
  
   # add the necessary declared launch arguments to the launch description
+  ld.add_action(declare_headless_cmd)
   ld.add_action(declare_use_sim_time_cmd)
   ld.add_action(declare_world_name_cmd)
   ld.add_action(declare_gz_verbosity_cmd)
@@ -166,6 +182,7 @@ def generate_launch_description():
   # Add the nodes to the launch description
   ld.add_action(rsp_launch)
   ld.add_action(start_gz_sim)
+  ld.add_action(start_gz_sim_headless)
   ld.add_action(gz_bridge_node)
   ld.add_action(spawn_entity_in_ign)
   ld.add_action(twist_mux_node)

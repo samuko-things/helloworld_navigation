@@ -100,7 +100,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 4.0
-        inflation_radius: 0.4
+        inflation_radius: 0.45
       always_send_full_costmap: True
       # lethal_cost_threshold: 200
 
@@ -135,7 +135,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 4.0
-        inflation_radius: 0.4
+        inflation_radius: 0.45
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: true
@@ -174,10 +174,11 @@ planner_server:
     planner_plugins: ["GridBased"]
     GridBased:
       plugin: "test_planner_plugin::TestPlanner"
-      cost_limit: 99
-      planner_name: "test"
+      cost_limit: 5
+      cost_travel_multiplier: 2.0
+      # planner_name: "test"
       # planner_name: "theta"
-      # planner_name: "lazy-theta"
+      planner_name: "lazy-theta"
       # planner_name: "astar-smooth"
       # planner_name: "astar"
 
