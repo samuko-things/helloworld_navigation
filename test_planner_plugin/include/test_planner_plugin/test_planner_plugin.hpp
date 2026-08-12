@@ -130,13 +130,6 @@ protected:
     const unsigned char* char_map,
     unsigned int size_x);
 
-  std::shared_ptr<GridNode> runLazyThetaStarPlan(
-    std::shared_ptr<GridNode> start_node,
-    std::shared_ptr<GridNode> goal_node,
-    const std::function<bool()>& cancel_checker,
-    const unsigned char* char_map,
-    unsigned int size_x);
-
   std::shared_ptr<GridNode> runAStarPlan(
     std::shared_ptr<GridNode> start_node,
     std::shared_ptr<GridNode> goal_node,
@@ -150,6 +143,33 @@ protected:
     const std::function<bool()>& cancel_checker,
     const unsigned char* char_map,
     unsigned int size_x);
+
+  
+  //---------LAZY THETA STAR---------------------
+
+  void setVertex(
+    std::shared_ptr<GridNode> &s,
+    const std::vector<bool> &visited,
+    const std::vector<std::shared_ptr<GridNode>> &node_lookup,
+    const std::vector<DirNode> &explore_directions,
+    const unsigned char* char_map,
+    unsigned int size_x);
+
+  void updateVertex(
+    const std::shared_ptr<GridNode> &active_node,
+    std::shared_ptr<GridNode> &neighbor_node,
+    // const DirNode &dir,
+    const unsigned char* char_map);
+
+  std::shared_ptr<GridNode> runLazyThetaStarPlan(
+    std::shared_ptr<GridNode> start_node,
+    std::shared_ptr<GridNode> goal_node,
+    const std::function<bool()>& cancel_checker,
+    const unsigned char* char_map,
+    unsigned int size_x);
+
+  //---------------------------------------------
+
 
   GridNode poseToGrid(const geometry_msgs::msg::Pose &pose);
   geometry_msgs::msg::Pose gridToPose(const GridNode &grid);
@@ -180,7 +200,7 @@ protected:
 
   CostmapMeta costmap_meta_;
 
-  double cost_limit_{99.0};
+  int cost_limit_;
 
   std::string planner_name_{"test"};
 

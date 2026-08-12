@@ -23,7 +23,7 @@ void TestPlanner::configure(
 
   // Declare parameters safely (Nav2 utility checks if already declared in yaml)
   nav2_util::declare_parameter_if_not_declared(
-    node, name + ".cost_limit", rclcpp::ParameterValue(99.0));
+    node, name + ".cost_limit", rclcpp::ParameterValue(99));
 
   nav2_util::declare_parameter_if_not_declared(
     node, name + ".planner_name", rclcpp::ParameterValue("test"));
@@ -32,10 +32,12 @@ void TestPlanner::configure(
   node->get_parameter(name + ".cost_limit", cost_limit_);
   node->get_parameter(name + ".planner_name", planner_name_);
 
+  cost_limit_ = std::clamp(cost_limit_, 0, 255);
+
   RCLCPP_INFO_STREAM(
     logger_, 
-    "Configured Test Planner Plugin with cost_limit=" << cost_limit_ 
-    << ", planner_name=" << planner_name_);
+    "Configured Test Planner Plugin with \ncost_limit=" << cost_limit_ 
+    << "\nplanner_name=" << planner_name_);
 }
 
 
@@ -85,6 +87,15 @@ nav_msgs::msg::Path TestPlanner::createPlan(
   }
 
   auto costmap = costmap_ros_->getCostmap();
+  if (!costmap) {
+    RCLCPP_ERROR(logger_, "Costmap not available");
+    return nav_msgs::msg::Path();
+  }
+
+  // Lock the costmap mutex to ensure thread-safe access to raw map memory during string pulling
+  std::lock_guard<nav2_costmap_2d::Costmap2D::mutex_t> lock(*(costmap->getMutex()));
+
+  // auto costmap = costmap_ros_->getCostmap();
 
   // Atomically refresh metadata struct
   costmap_meta_.update(costmap);
@@ -97,17 +108,17 @@ nav_msgs::msg::Path TestPlanner::createPlan(
 
   std::shared_ptr<GridNode> best_goal = nullptr;
 
-//  if(planner_name_ == "lazy-theta"){
-//   best_goal = runLazyThetaStarPlan(
-//     start_node, 
-//     goal_node, 
-//     cancel_checker, 
-//     char_map, 
-//     costmap_meta_.size_x
-//   );
-//  }
  if(planner_name_ == "theta"){
   best_goal = runThetaStarPlan(
+    start_node, 
+    goal_node, 
+    cancel_checker, 
+    char_map, 
+    costmap_meta_.size_x
+  );
+ }
+ else if(planner_name_ == "lazy-theta"){
+  best_goal = runLazyThetaStarPlan(
     start_node, 
     goal_node, 
     cancel_checker, 
@@ -372,163 +383,6 @@ std::shared_ptr<GridNode> TestPlanner::runThetaStarPlan(
 
 
 
-
-
-
-
-
-
-
-
-// std::shared_ptr<GridNode> TestPlanner::runLazyThetaStarPlan(
-//   std::shared_ptr<GridNode> start_node,
-//   std::shared_ptr<GridNode> goal_node,
-//   const std::function<bool()>& cancel_checker,
-//   const unsigned char* char_map,
-//   unsigned int size_x)
-// {
-//   std::vector<DirNode> explore_directions = {
-//       DirNode({-1, 0}, 1.0), 
-//       DirNode({1, 0}, 1.0), 
-//       DirNode({0, 1}, 1.0), 
-//       DirNode({0, -1}, 1.0),
-//       DirNode({-1, 1}, 1.4142), 
-//       DirNode({1, -1}, 1.4142), 
-//       DirNode({1, 1}, 1.4142), 
-//       DirNode({-1, -1}, 1.4142),
-//   };
-
-//   auto comp = [](const std::shared_ptr<GridNode>& a, const std::shared_ptr<GridNode>& b) {
-//     return *a > *b;
-//   };
-
-//   std::priority_queue<
-//     std::shared_ptr<GridNode>, 
-//     std::vector<std::shared_ptr<GridNode>>, 
-//     decltype(comp)
-//   > nodes_to_explore(comp);
-
-//   int map_size = costmap_meta_.size_x * costmap_meta_.size_y;
-//   std::vector<bool> visited(map_size, false);
-
-//   // Map to store persistent node instances across grid locations (matches nodes_map in Python)
-//   std::unordered_map<int, std::shared_ptr<GridNode>> nodes_map;
-
-//   start_node->g_cost = 0.0;
-//   start_node->h_cost = euclidean_distance(*start_node, *goal_node);
-//   start_node->prev = start_node; // Self-reference for root
-
-//   int start_idx = gridToMapIndex(*start_node);
-//   nodes_map[start_idx] = start_node;
-//   nodes_to_explore.push(start_node);
-
-//   std::shared_ptr<GridNode> active_node = nullptr;
-
-//   while (!nodes_to_explore.empty() /*&& rclcpp::ok()*/) {
-//     if (cancel_checker && cancel_checker()) {
-//       return nullptr;
-//     }
-
-//     active_node = nodes_to_explore.top();
-//     nodes_to_explore.pop();
-
-//     int active_idx = gridToMapIndex(*active_node);
-
-//     if (visited[active_idx]) {
-//       continue;
-//     }
-
-//     // --------------------------------------------------
-//     // LAZY VALIDATION PHASE
-//     // --------------------------------------------------
-//     if (active_node->prev && active_node->prev != active_node) {
-//       // Check if line of sight to optimistic parent is invalid
-//       if (!lineOfSight(*active_node, *(active_node->prev), char_map, size_x)) {
-//         double min_g = std::numeric_limits<double>::infinity();
-//         std::shared_ptr<GridNode> best_parent = nullptr;
-
-//         // Recalculate cost using valid, already-explored (visited) neighbors
-//         for (const auto &dir : explore_directions) {
-//           GridNode neighbor_pos = *active_node + dir.dir;
-//           int neighbor_idx = gridToMapIndex(neighbor_pos);
-
-//           auto it = nodes_map.find(neighbor_idx);
-//           if (it != nodes_map.end()) {
-//             auto neighbor_node = it->second;
-//             if (visited[neighbor_idx]) {
-//               double cost_to_current = neighbor_node->g_cost + dir.t_cost;
-//               if (cost_to_current < min_g) {
-//                 min_g = cost_to_current;
-//                 best_parent = neighbor_node;
-//               }
-//             }
-//           }
-//         }
-
-//         if (best_parent) {
-//           active_node->g_cost = min_g;
-//           active_node->prev = best_parent;
-//           // Re-queue so it re-sorts in the priority queue under its corrected cost
-//           nodes_to_explore.push(active_node);
-//           continue;
-//         } else {
-//           visited[active_idx] = true;
-//           continue;
-//         }
-//       }
-//     }
-
-//     // --------------------------------------------------
-//     // GOAL CHECK
-//     // --------------------------------------------------
-//     if (*active_node == *goal_node) {
-//       return active_node;
-//     }
-
-//     visited[active_idx] = true;
-
-//     // --------------------------------------------------
-//     // EXPAND NEIGHBORS (OPTIMISTIC STEP)
-//     // --------------------------------------------------
-//     for (const auto &dir : explore_directions) {
-//       GridNode neighbor_pos = *active_node + dir.dir;
-//       int neighbor_idx = gridToMapIndex(neighbor_pos);
-
-//       // Retrieve existing persistent node or initialize a new one
-//       if (nodes_map.find(neighbor_idx) == nodes_map.end()) {
-//         auto new_node = std::make_shared<GridNode>(neighbor_pos);
-//         new_node->g_cost = std::numeric_limits<double>::infinity();
-//         nodes_map[neighbor_idx] = new_node;
-//       }
-
-//       auto neighbor_node = nodes_map[neighbor_idx];
-
-//       if (!visited[neighbor_idx] && 
-//           isGridOnMap(neighbor_pos) && 
-//           isMapCellFree(neighbor_pos, char_map)) 
-//       {
-//         // Optimistic assumption: line of sight from parent to neighbor exists
-//         auto parent = active_node->prev ? active_node->prev : active_node;
-//         double new_cost = parent->g_cost + euclidean_distance(*parent, *neighbor_node);
-
-//         if (new_cost < neighbor_node->g_cost) {
-//           neighbor_node->g_cost = new_cost;
-//           neighbor_node->h_cost = euclidean_distance(*neighbor_node, *goal_node);
-//           neighbor_node->prev = parent;
-
-//           nodes_to_explore.push(neighbor_node);
-//         }
-//       }
-//     }
-//   }
-
-//   return nullptr;
-// }
-
-
-
-
-
 std::shared_ptr<GridNode> TestPlanner::runAStarPlan(
   std::shared_ptr<GridNode> start_node,
   std::shared_ptr<GridNode> goal_node,
@@ -618,10 +472,6 @@ std::shared_ptr<GridNode> TestPlanner::runAStarPlan(
 
 
 
-
-
-
-
 std::shared_ptr<GridNode> TestPlanner::greedyStringPullSmooth(
   std::shared_ptr<GridNode> grid_node_path,
   const std::function<bool()>& cancel_checker,
@@ -691,6 +541,216 @@ std::shared_ptr<GridNode> TestPlanner::greedyStringPullSmooth(
 
 
 
+//--------------- LAZY THETA STAR ------------------------------
+
+void TestPlanner::setVertex(
+  std::shared_ptr<GridNode> &s,
+  const std::vector<bool> &visited,
+  const std::vector<std::shared_ptr<GridNode>> &node_lookup,
+  const std::vector<DirNode> &explore_directions,
+  const unsigned char* char_map,
+  unsigned int size_x)
+{
+  // Start node or unparented node check
+  if (!s->prev || *s == *(s->prev)) {
+    return;
+  }
+
+  // 1. Validate optimistic line-of-sight to grandparent
+  if (lineOfSight(*s, *(s->prev), char_map, size_x)) {
+    return; // Optimistic path is valid
+  }
+
+  // 2. Line-of-sight failed: Fall back to finding the best expanded neighbor
+  s->g_cost = std::numeric_limits<double>::infinity();
+  std::shared_ptr<GridNode> best_parent = nullptr;
+
+  for (const auto &dir : explore_directions) {
+    GridNode neighbor_pos = *s + dir.dir;
+
+    if (!isGridOnMap(neighbor_pos)) {
+      continue;
+    }
+
+    int nbr_idx = gridToMapIndex(neighbor_pos);
+
+    // Consider only expanded (visited) neighbors
+    if (visited[nbr_idx] && node_lookup[nbr_idx] != nullptr) {
+      auto visited_nbr = node_lookup[nbr_idx];
+
+      // CRITICAL FIX: Cycle Prevention
+      // Check if picking visited_nbr as parent creates a loop back to s
+      bool forms_cycle = false;
+      auto curr = visited_nbr;
+      while (curr && curr->prev && !(*curr == *(curr->prev))) {
+        if (*curr == *s) {
+          forms_cycle = true;
+          break;
+        }
+        curr = curr->prev;
+      }
+
+      if (forms_cycle) {
+        continue;
+      }
+
+      // Check line-of-sight to the candidate neighbor
+      if (lineOfSight(*s, *visited_nbr, char_map, size_x)) {
+        double dist = euclidean_distance(*s, *visited_nbr);
+        double candidate_g = visited_nbr->g_cost + dist + char_map[gridToMapIndex(*s)];
+
+        if (candidate_g < s->g_cost) {
+          s->g_cost = candidate_g;
+          best_parent = visited_nbr;
+        }
+      }
+    }
+  }
+
+  s->prev = best_parent;
+}
+
+
+void TestPlanner::updateVertex(
+  const std::shared_ptr<GridNode> &active_node,
+  std::shared_ptr<GridNode> &neighbor_node,
+  // const DirNode &dir,
+  const unsigned char* char_map)
+{
+  int nbr_idx = gridToMapIndex(*neighbor_node);
+  double old_g = neighbor_node->g_cost;
+
+  // Inherit grandparent if present, otherwise set active_node as parent
+  std::shared_ptr<GridNode> optimistic_parent = active_node->prev ? active_node->prev : active_node;
+  
+  double dist = euclidean_distance(*neighbor_node, *optimistic_parent);
+  double optimistic_g = optimistic_parent->g_cost + dist + char_map[nbr_idx];
+
+  // Precision check to prevent redundant updates
+  if (optimistic_g + 1e-5 < old_g) {
+    neighbor_node->g_cost = optimistic_g;
+    neighbor_node->prev = optimistic_parent;
+  }
+}
+
+
+
+std::shared_ptr<GridNode> TestPlanner::runLazyThetaStarPlan(
+  std::shared_ptr<GridNode> start_node,
+  std::shared_ptr<GridNode> goal_node,
+  const std::function<bool()>& cancel_checker,
+  const unsigned char* char_map,
+  unsigned int size_x)
+{
+  std::vector<DirNode> explore_directions = {
+      DirNode({-1, 0}, 1.0), 
+      DirNode({1, 0}, 1.0), 
+      DirNode({0, 1}, 1.0), 
+      DirNode({0, -1}, 1.0),
+      DirNode({-1, 1}, 1.4142), 
+      DirNode({1, -1}, 1.4142), 
+      DirNode({1, 1}, 1.4142), 
+      DirNode({-1, -1}, 1.4142),
+  };
+
+  auto comp = [](const std::shared_ptr<GridNode>& a, const std::shared_ptr<GridNode>& b) {
+    return *a > *b;
+  };
+
+  std::priority_queue<
+    std::shared_ptr<GridNode>, 
+    std::vector<std::shared_ptr<GridNode>>, 
+    decltype(comp)
+  > nodes_to_explore(comp);
+
+  int map_size = costmap_meta_.size_x * costmap_meta_.size_y;
+  std::vector<bool> visited(map_size, false);
+  std::vector<std::shared_ptr<GridNode>> node_lookup(map_size, nullptr);
+
+  // Initialize Start Node
+  start_node->g_cost = 0.0;
+  start_node->h_cost = euclidean_distance(*start_node, *goal_node);
+  start_node->prev = nullptr; // Explicitly null for start node termination
+  
+  int start_idx = gridToMapIndex(*start_node);
+  node_lookup[start_idx] = start_node;
+  nodes_to_explore.push(start_node);
+
+  while (!nodes_to_explore.empty()) {
+    if (cancel_checker && cancel_checker()) {
+      return nullptr;
+    }
+
+    std::shared_ptr<GridNode> active_node = nodes_to_explore.top();
+    nodes_to_explore.pop();
+    
+    int active_idx = gridToMapIndex(*active_node);
+    
+    // Skip if node has already been expanded
+    if (visited[active_idx]) {
+      continue;
+    }
+
+    // 1. LAZY EVALUATION STEP
+    setVertex(active_node, visited, node_lookup, explore_directions, char_map, size_x);
+
+    // If setVertex failed to locate a valid path, discard node
+    if (std::isinf(active_node->g_cost) || (active_node != start_node && !active_node->prev)) {
+      continue;
+    }
+
+    // Mark as expanded (CLOSED)
+    visited[active_idx] = true;
+
+    // Goal Check
+    if (*active_node == *goal_node) {
+      return active_node;
+    }
+
+    // 2. EXPAND NEIGHBORS
+    for (const auto &dir : explore_directions) {
+      GridNode neighbor_pos = *active_node + dir.dir;
+
+      if (!isGridOnMap(neighbor_pos) || !isMapCellFree(neighbor_pos, char_map)) {
+        continue;
+      }
+
+      int neighbor_idx = gridToMapIndex(neighbor_pos);
+      if (visited[neighbor_idx]) {
+        continue;
+      }
+
+      std::shared_ptr<GridNode> neighbor_node = node_lookup[neighbor_idx];
+      if (!neighbor_node) {
+        neighbor_node = std::make_shared<GridNode>(neighbor_pos);
+        neighbor_node->g_cost = std::numeric_limits<double>::infinity();
+        neighbor_node->h_cost = euclidean_distance(*neighbor_node, *goal_node);
+        node_lookup[neighbor_idx] = neighbor_node;
+      }
+
+      double old_g = neighbor_node->g_cost;
+
+      // Optimistically update neighbor
+      updateVertex(active_node, neighbor_node, 
+        // dir, 
+        char_map);
+
+      // Re-push to OPEN queue if cost improved
+      if (neighbor_node->g_cost < old_g) {
+        nodes_to_explore.push(neighbor_node);
+      }
+    }
+  }
+
+  return nullptr;
+}
+
+//--------------------------------------------------------------
+
+
+
+
+
 
 
 
@@ -725,7 +785,7 @@ bool TestPlanner::isGridOnMap(const GridNode &grid)
 
 bool TestPlanner::isMapCellFree(const GridNode &grid, const unsigned char* char_map)
 {
-  return /*(char_map[gridToMapIndex(grid)] >= 0) &&*/ (char_map[gridToMapIndex(grid)] < static_cast<int>(cost_limit_));
+  return /*(char_map[gridToMapIndex(grid)] >= 0) &&*/ (char_map[gridToMapIndex(grid)] < static_cast<unsigned char>(cost_limit_));
 }
 
 
@@ -759,7 +819,7 @@ bool TestPlanner::lineOfSight(
   while (true)
   {
     // Direct, ultra-fast array lookup bypassing getCost() overhead
-    if (char_map[current_idx] > static_cast<int>(cost_limit_))
+    if (char_map[current_idx] > static_cast<unsigned char>(cost_limit_))
       return false;
 
     if (x0 == x1 && y0 == y1)
