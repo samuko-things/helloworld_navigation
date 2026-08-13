@@ -587,14 +587,12 @@ std::shared_ptr<GridNode> TestPlanner::runLazyThetaStarPlan(
     std::shared_ptr<GridNode> active_node = nodes_to_explore.top();
     nodes_to_explore.pop();
 
-    int active_idx = gridToMapIndex(*active_node);
-
     // Skip closed nodes or stale pointers
-    if (visited[active_idx]) {
+    if (visited[gridToMapIndex(*active_node)]) {
       continue;
     }
 
-    if (node_lookup[active_idx] && active_node->g_cost > node_lookup[active_idx]->g_cost) {
+    if (node_lookup[gridToMapIndex(*active_node)] && active_node->g_cost > node_lookup[gridToMapIndex(*active_node)]->g_cost) {
       continue;
     }
 
@@ -611,21 +609,18 @@ std::shared_ptr<GridNode> TestPlanner::runLazyThetaStarPlan(
         for (const auto &dir : explore_directions) {
           GridNode neighbor_pos = *active_node + dir.dir;
 
-          if (!isGridOnMap(neighbor_pos)) {
-            continue;
-          }
+          if (visited[gridToMapIndex(neighbor_pos)] && isGridOnMap(neighbor_pos) && isMapCellFree(neighbor_pos, char_map)) {
+            if (node_lookup[gridToMapIndex(neighbor_pos)] != nullptr) {
+              auto neighbor_node = node_lookup[gridToMapIndex(neighbor_pos)];
 
-          int neighbor_idx = gridToMapIndex(neighbor_pos);
-          if (visited[neighbor_idx] && node_lookup[neighbor_idx] != nullptr) {
-            auto neighbor_node = node_lookup[neighbor_idx];
+              if (lineOfSight(*neighbor_node, *active_node, char_map, size_x, true)) {
+                double dist = euclidean_distance(*active_node, *neighbor_node);
+                double candidate_g = neighbor_node->g_cost + (dist * getGridCost(*active_node, char_map));
 
-            if (lineOfSight(*neighbor_node, *active_node, char_map, size_x)) {
-              double dist = euclidean_distance(*active_node, *neighbor_node);
-              double candidate_g = neighbor_node->g_cost + (dist * getGridCost(*active_node, char_map));
-
-              if (candidate_g < min_g) {
-                min_g = candidate_g;
-                best_parent = neighbor_node;
+                if (candidate_g < min_g) {
+                  min_g = candidate_g;
+                  best_parent = neighbor_node;
+                }
               }
             }
           }
@@ -636,14 +631,14 @@ std::shared_ptr<GridNode> TestPlanner::runLazyThetaStarPlan(
           active_node->prev = best_parent;
         } else {
           // Unreachable cell; discard and close
-          visited[active_idx] = true;
+          visited[gridToMapIndex(*active_node)] = true;
           continue;
         }
       }
     }
 
     // Mark node as closed/visited
-    visited[active_idx] = true;
+    visited[gridToMapIndex(*active_node)] = true;
 
     // --------------------------------------------------
     // 2. GOAL CHECK
@@ -658,37 +653,30 @@ std::shared_ptr<GridNode> TestPlanner::runLazyThetaStarPlan(
     for (const auto &dir : explore_directions) {
       GridNode neighbor_pos = *active_node + dir.dir;
 
-      if (!isGridOnMap(neighbor_pos) || !isMapCellFree(neighbor_pos, char_map)) {
-        continue;
-      }
+      if (!visited[gridToMapIndex(neighbor_pos)] && isGridOnMap(neighbor_pos) && isMapCellFree(neighbor_pos, char_map)){
+        // Optimistic assumption: Try active_node's parent if present, else active_node
+        std::shared_ptr<GridNode> optimistic_parent = (active_node->prev != nullptr) 
+                                                      ? active_node->prev 
+                                                      : active_node;
 
-      int neighbor_idx = gridToMapIndex(neighbor_pos);
-      if (visited[neighbor_idx]) {
-        continue;
-      }
+        double dist = euclidean_distance(*optimistic_parent, neighbor_pos);
+        double grid_cost_factor = getGridCost(neighbor_pos, char_map);
+        double new_cost = optimistic_parent->g_cost + (dist * grid_cost_factor);
 
-      // Optimistic assumption: Try active_node's parent if present, else active_node
-      std::shared_ptr<GridNode> optimistic_parent = (active_node->prev != nullptr) 
-                                                     ? active_node->prev 
-                                                     : active_node;
+        auto neighbor_node = node_lookup[gridToMapIndex(neighbor_pos)];
 
-      double dist = euclidean_distance(*optimistic_parent, neighbor_pos);
-      double grid_cost_factor = getGridCost(neighbor_pos, char_map);
-      double new_cost = optimistic_parent->g_cost + (dist * grid_cost_factor);
+        if (!neighbor_node || new_cost < neighbor_node->g_cost) {
+          if (!neighbor_node) {
+            neighbor_node = std::make_shared<GridNode>(neighbor_pos);
+          }
 
-      auto neighbor_node = node_lookup[neighbor_idx];
+          neighbor_node->g_cost = new_cost;
+          neighbor_node->h_cost = euclidean_distance(*neighbor_node, *goal_node);
+          neighbor_node->prev = optimistic_parent;
 
-      if (!neighbor_node || new_cost < neighbor_node->g_cost) {
-        if (!neighbor_node) {
-          neighbor_node = std::make_shared<GridNode>(neighbor_pos);
+          node_lookup[gridToMapIndex(neighbor_pos)] = neighbor_node;
+          nodes_to_explore.push(neighbor_node);
         }
-
-        neighbor_node->g_cost = new_cost;
-        neighbor_node->h_cost = euclidean_distance(*neighbor_node, *goal_node);
-        neighbor_node->prev = optimistic_parent;
-
-        node_lookup[neighbor_idx] = neighbor_node;
-        nodes_to_explore.push(neighbor_node);
       }
     }
   }
@@ -756,7 +744,8 @@ bool TestPlanner::lineOfSight(
   const GridNode &start, 
   const GridNode &end,
   const unsigned char* char_map,
-  unsigned int size_x) const
+  unsigned int size_x,
+  bool relax) const
 {
   int x0 = start.x; int y0 = start.y;
   int x1 = end.x; int y1 = end.y;
@@ -782,8 +771,15 @@ bool TestPlanner::lineOfSight(
       return false;
     }
 
-    if (char_map[current_idx] > static_cast<unsigned char>(cost_limit_)) {
-      return false;
+    if(relax){
+      if (char_map[current_idx] > static_cast<unsigned char>(cost_limit_+120)) {
+        return false;
+      }
+    }
+    else {
+      if (char_map[current_idx] > static_cast<unsigned char>(cost_limit_)) {
+        return false;
+      }
     }
 
     if (x0 == x1 && y0 == y1) {

@@ -170,7 +170,8 @@ protected:
     const GridNode &start, 
     const GridNode &end,
     const unsigned char* char_map,
-    unsigned int size_x) const;
+    unsigned int size_x,
+    bool relax=false) const;
 
   std::vector<geometry_msgs::msg::PoseStamped>
   addStraightLinePoses(
