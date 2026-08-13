@@ -27,7 +27,7 @@ void TestPlanner::configure(
 
   // Declare parameters safely (Nav2 utility checks if already declared in yaml)
   nav2_util::declare_parameter_if_not_declared(
-    node, name + ".cost_limit", rclcpp::ParameterValue(50));
+    node, name + ".los_shortcut_cost_limit", rclcpp::ParameterValue(50));
 
   nav2_util::declare_parameter_if_not_declared(
     node, name + ".cost_travel_multiplier", rclcpp::ParameterValue(2.0));
@@ -36,15 +36,15 @@ void TestPlanner::configure(
     node, name + ".planner_name", rclcpp::ParameterValue("test"));
 
   // Retrieve values
-  node->get_parameter(name + ".cost_limit", cost_limit_);
+  node->get_parameter(name + ".los_shortcut_cost_limit", los_shortcut_cost_limit_);
   node->get_parameter(name + ".cost_travel_multiplier", cost_travel_multiplier_);
   node->get_parameter(name + ".planner_name", planner_name_);
 
-  cost_limit_ = std::clamp(cost_limit_, 0, 100);
+  los_shortcut_cost_limit_ = std::clamp(los_shortcut_cost_limit_, 0, 100);
 
   RCLCPP_INFO_STREAM(
     logger_, 
-    "Configured Test Planner Plugin with \ncost_limit=" << cost_limit_ 
+    "Configured Test Planner Plugin with \nlos_shortcut_cost_limit=" << los_shortcut_cost_limit_ 
     << "\nplanner_name=" << planner_name_);
 }
 
@@ -731,7 +731,7 @@ bool TestPlanner::isMapCellFree(const GridNode &grid, const unsigned char* char_
 {
   // RCLCPP_INFO_STREAM(
   //   logger_, "cell_cost = " << static_cast<int>(char_map[gridToMapIndex(grid)]));
-  return /*(char_map[gridToMapIndex(grid)] >= 0) &&*/ (char_map[gridToMapIndex(grid)] < static_cast<unsigned char>(cost_limit_+120));
+  return /*(char_map[gridToMapIndex(grid)] >= 0) &&*/ (char_map[gridToMapIndex(grid)] < static_cast<unsigned char>(los_shortcut_cost_limit_+120));
 }
 
 
@@ -772,12 +772,12 @@ bool TestPlanner::lineOfSight(
     }
 
     if(relax){
-      if (char_map[current_idx] > static_cast<unsigned char>(cost_limit_+120)) {
+      if (char_map[current_idx] > static_cast<unsigned char>(los_shortcut_cost_limit_+120)) {
         return false;
       }
     }
     else {
-      if (char_map[current_idx] > static_cast<unsigned char>(cost_limit_)) {
+      if (char_map[current_idx] > static_cast<unsigned char>(los_shortcut_cost_limit_)) {
         return false;
       }
     }

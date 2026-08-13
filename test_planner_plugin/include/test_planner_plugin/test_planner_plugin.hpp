@@ -187,7 +187,7 @@ protected:
 
   CostmapMeta costmap_meta_;
 
-  int cost_limit_;
+  int los_shortcut_cost_limit_;
 
   double cost_travel_multiplier_;
 
