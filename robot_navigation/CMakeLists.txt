@@ -7,6 +7,15 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 
+#------PYTHON--------------------------------
+ament_python_install_package(${PROJECT_NAME})
+
+install(PROGRAMS
+  ${PROJECT_NAME}/planner_benchmark.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+#---------------------------------------------
+
 #---------------ADD FILES-----------------------
 install(DIRECTORY
     config
