@@ -12,12 +12,12 @@ double round_to_3dp(double val) {
 
 
 void LazyThetaPlanner::configure(
-  const rclcpp_lifecycle::LifecycleNode::WeakPtr & parent,
+  const rclcpp_lifecycle::LifecycleNode::WeakPtr & optimistic_parent,
   std::string name,
   std::shared_ptr<tf2_ros::Buffer> /*tf*/,
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros)
 {
-  auto node = parent.lock();
+  auto node = optimistic_parent.lock();
   if (!node) {
     throw std::runtime_error("Failed to lock lifecycle node");
   }
@@ -52,6 +52,14 @@ void LazyThetaPlanner::activate()
   auto costmap = costmap_ros_->getCostmap();
   costmap_meta_.update(costmap);
 
+  unsigned int map_size = costmap_meta_.size_x * costmap_meta_.size_y;
+
+  // Pre-allocate vector pools once on activation
+  node_pool_.resize(map_size);
+  node_initialized_.resize(map_size, false);
+  g_score_cache_.resize(map_size, -1.0);
+  closed_cache_.resize(map_size, 0);
+
   RCLCPP_INFO_STREAM(logger_, "Plugin Activated Successfully");
 }
 
@@ -65,6 +73,18 @@ void LazyThetaPlanner::deactivate() {}
 
 void LazyThetaPlanner::cleanup()
 {
+  node_pool_.clear();
+  node_pool_.shrink_to_fit();
+
+  node_initialized_.clear();
+  node_initialized_.shrink_to_fit();
+
+  g_score_cache_.clear();
+  g_score_cache_.shrink_to_fit();
+
+  closed_cache_.clear();
+  closed_cache_.shrink_to_fit();
+
   costmap_ros_.reset();
 
   RCLCPP_INFO_STREAM(logger_, "Plugin Cleaned Up Successfully");
@@ -79,8 +99,6 @@ nav_msgs::msg::Path LazyThetaPlanner::createPlan(
   const geometry_msgs::msg::PoseStamped & goal,
   std::function<bool()> cancel_checker)
 {
-  // auto start_time = std::chrono::steady_clock::now();
-
   if (!costmap_ros_) {
     return nav_msgs::msg::Path();
   }
@@ -96,15 +114,48 @@ nav_msgs::msg::Path LazyThetaPlanner::createPlan(
 
   // Atomically refresh metadata struct
   costmap_meta_.update(costmap);
+
+  unsigned int current_map_size = costmap_meta_.size_x * costmap_meta_.size_y;
+
+  // Fallback memory check in case the costmap dynamically resizes during runtime
+  if (node_pool_.size() != current_map_size) {
+    node_pool_.resize(current_map_size);
+    node_initialized_.resize(current_map_size);
+    g_score_cache_.resize(current_map_size);
+    closed_cache_.resize(current_map_size);
+  }
+
+  // --- FAST FLAT MEMORY RESETS ---
+  std::fill(node_initialized_.begin(), node_initialized_.end(), false);
+  std::fill(closed_cache_.begin(), closed_cache_.end(), 0);
+  std::fill(g_score_cache_.begin(), g_score_cache_.end(), -1.0);
+
+  auto get_node_from_pool = [this](int x, int y, int index) -> GridNode* {
+    GridNode* node = &node_pool_[index];
+    if (!node_initialized_[index]) {
+      node->x = x;
+      node->y = y;
+      node->g_cost = std::numeric_limits<double>::max();
+      node->h_cost = 0.0;
+      node->prev = nullptr;
+      node_initialized_[index] = true;
+    }
+    return node;
+  };
+
   const unsigned char* char_map = costmap->getCharMap();
 
-  auto start_node = std::make_shared<GridNode>(poseToGrid(start.pose));
-  auto goal_node = std::make_shared<GridNode>(poseToGrid(goal.pose));
+  // Start & Goal Node Setup
+  GridNode raw_start = poseToGrid(start.pose);
+  int start_idx = gridToMapIndex(raw_start);
+  GridNode* start_node = get_node_from_pool(raw_start.x, raw_start.y, start_idx);
+
+  GridNode raw_goal = poseToGrid(goal.pose);
+  int goal_idx = gridToMapIndex(raw_goal);
+  GridNode* goal_node = get_node_from_pool(raw_goal.x, raw_goal.y, goal_idx);
 
   // Execute Search
-  std::shared_ptr<GridNode> best_goal = nullptr;
-
-  best_goal = runLazyThetaStarPlan(
+  GridNode* best_goal = runLazyThetaStarPlan(
     start_node, 
     goal_node, 
     cancel_checker, 
@@ -112,185 +163,194 @@ nav_msgs::msg::Path LazyThetaPlanner::createPlan(
     costmap_meta_.size_x
   );
 
-  // Reconstruction
+  // Path Reconstruction
   nav_msgs::msg::Path path;
   path.header.frame_id = costmap_ros_->getGlobalFrameID();
 
   if (!best_goal) {
-    RCLCPP_INFO_STREAM(logger_, "No Path Generated");
     return path;
   }
 
-  auto curr_node = best_goal;
-  while (curr_node) {
-    geometry_msgs::msg::PoseStamped pose_stamped;
-    pose_stamped.header.frame_id = path.header.frame_id;
-    pose_stamped.header.stamp = path.header.stamp;
-    pose_stamped.pose = gridToPose(*curr_node);
-    
-    path.poses.push_back(pose_stamped);
-    curr_node = curr_node->prev; // Traces shared_ptr back safely
+  GridNode* node = best_goal;
+  while (node)
+  {
+    geometry_msgs::msg::PoseStamped ps;
+    ps.header.frame_id = path.header.frame_id;
+    ps.pose = gridToPose(*node);
+    path.poses.push_back(ps);
+
+    if (node->prev == node) {
+      break;
+    }
+    node = node->prev;
   }
 
   std::reverse(path.poses.begin(), path.poses.end());
-
-  // auto end_time = std::chrono::steady_clock::now();
-  // std::chrono::duration<double> diff_sec = end_time - start_time;
-  // RCLCPP_INFO_STREAM(logger_, "planning_time = " << round_to_3dp(diff_sec.count()*1000.0) << " ms");
-
-  return fillUpPath(path, goal); 
+  return fillUpPath(path, goal);
 }
 
 
 
 //--------------- LAZY THETA STAR ------------------------------
 
-std::shared_ptr<GridNode> LazyThetaPlanner::runLazyThetaStarPlan(
-  std::shared_ptr<GridNode> start_node,
-  std::shared_ptr<GridNode> goal_node,
+GridNode* LazyThetaPlanner::runLazyThetaStarPlan(
+  GridNode* start_node,
+  GridNode* goal_node,
   const std::function<bool()>& cancel_checker,
   const unsigned char* char_map,
   unsigned int size_x)
 {
-  std::vector<DirNode> explore_directions = {
-      DirNode({-1, 0}, 1.0), 
-      DirNode({1, 0}, 1.0), 
-      DirNode({0, 1}, 1.0), 
-      DirNode({0, -1}, 1.0),
-      DirNode({-1, 1}, 1.4142), 
-      DirNode({1, -1}, 1.4142), 
-      DirNode({1, 1}, 1.4142), 
-      DirNode({-1, -1}, 1.4142),
-  };
-
-  auto comp = [](const std::shared_ptr<GridNode>& a, const std::shared_ptr<GridNode>& b) {
-    return *a > *b;
-  };
-
   std::priority_queue<
-    std::shared_ptr<GridNode>, 
-    std::vector<std::shared_ptr<GridNode>>, 
-    decltype(comp)
-  > nodes_to_explore(comp);
+    GridNode*,
+    std::vector<GridNode*>,
+    LazyThetaPlanner::CompareNode
+  > open;
 
-  int map_size = costmap_meta_.size_x * costmap_meta_.size_y;
-  std::vector<bool> visited(map_size, false);
-  std::vector<std::shared_ptr<GridNode>> node_lookup(map_size, nullptr);
+  int start_idx = gridToMapIndex(*start_node);
 
   start_node->g_cost = 0.0;
   start_node->h_cost = euclidean_distance(*start_node, *goal_node);
-  start_node->prev = nullptr; // Start node has no parent
+  start_node->prev = start_node;
 
-  int start_idx = gridToMapIndex(*start_node);
-  node_lookup[start_idx] = start_node;
-  nodes_to_explore.push(start_node);
+  open.push(start_node);
+  g_score_cache_[start_idx] = 0.0;
 
-  while (!nodes_to_explore.empty()) {
+  // Directions with pre-calculated step distances for accurate grid traversal weighting
+  static const struct { int dx; int dy; double dist; } dirs[] = {
+    {-1,  0, 1.0},
+    {1,  0, 1.0},
+    {0, -1, 1.0},
+    {0,  1, 1.0},
+    {-1, -1, 1.4142},
+    {-1, 1, 1.4142},
+    {1, -1, 1.4142},
+    {1,  1, 1.4142}
+  };
+
+  auto get_node_from_pool = [this](int x, int y, int index) -> GridNode* {
+    GridNode* node = &node_pool_[index];
+    if (!node_initialized_[index]) {
+      node->x = x;
+      node->y = y;
+      node->g_cost = std::numeric_limits<double>::max();
+      node->h_cost = 0.0;
+      node->prev = nullptr;
+      node_initialized_[index] = true;
+    }
+    return node;
+  };
+
+  while (!open.empty() /*&& rclcpp::ok()*/)
+  {
     if (cancel_checker && cancel_checker()) {
       return nullptr;
     }
 
-    std::shared_ptr<GridNode> active_node = nodes_to_explore.top();
-    int active_idx = gridToMapIndex(*active_node);
-    nodes_to_explore.pop();
+    GridNode* active = open.top();
+    open.pop();
 
-    // Skip closed nodes or stale pointers
-    if (visited[active_idx]) {
-      continue;
-    }
+    int active_idx = gridToMapIndex(*active);
 
-    if (node_lookup[active_idx] && active_node->g_cost > node_lookup[active_idx]->g_cost) {
+    if (closed_cache_[active_idx] == 1) {
       continue;
     }
 
     // --------------------------------------------------
     // 1. LAZY VALIDATION / SETVERTEX PHASE
     // --------------------------------------------------
-    if (active_node->prev != nullptr) {
-      // Check if optimistic shortcut to parent is valid
-      if (!lineOfSight(*(active_node->prev), *active_node, char_map, size_x)) {
-        // Line of sight failed: Repair active_node inline using VISITED neighbors
+    if (active->prev && active->prev != active)
+    {
+      if (!lineOfSight(active->prev->x, active->prev->y, active->x, active->y, char_map, size_x))
+      {
         double min_g = std::numeric_limits<double>::infinity();
-        std::shared_ptr<GridNode> best_parent = nullptr;
+        GridNode* best_parent = nullptr;
 
-        for (const auto &dir : explore_directions) {
-          GridNode neighbor_pos = *active_node + dir.dir;
-          int neigbhor_idx = gridToMapIndex(neighbor_pos);
+        for (const auto & d : dirs)
+        {
+          int nx = active->x + d.dx;
+          int ny = active->y + d.dy;
+          GridNode nbr_pos(nx, ny);
+          int nbr_idx = gridToMapIndex(nbr_pos);
 
-          if (visited[neigbhor_idx] && isGridOnMap(neighbor_pos) && isMapCellFree(neighbor_pos, char_map)) {
-            if (node_lookup[neigbhor_idx] != nullptr) {
-              auto neighbor_node = node_lookup[neigbhor_idx];
+          if ((closed_cache_[nbr_idx] == 1) && isGridOnMap(nbr_pos) && isMapCellFree(nbr_pos, char_map))
+          {
+            GridNode* nbr_node = &node_pool_[nbr_idx];
 
-              if (lineOfSight(*neighbor_node, *active_node, char_map, size_x, true)) {
-                double dist = euclidean_distance(*active_node, *neighbor_node);
-                double candidate_g = neighbor_node->g_cost + (dist * getGridCost(*active_node, char_map));
-
-                if (candidate_g < min_g) {
-                  min_g = candidate_g;
-                  best_parent = neighbor_node;
-                }
+            if (lineOfSight(nbr_node->x, nbr_node->y, active->x, active->y, char_map, size_x, true))
+            // double g_val = g_score_cache_[nbr_idx];
+            // if (g_val >= 0.0)
+            {
+              // Include step heuristic + costmap terrain cost during optimistic_parent repair
+              double g_val = g_score_cache_[nbr_idx];
+              double dist = euclidean_distance(*nbr_node, *active);
+              double cost_to_current = g_val + (dist * getGridCost(*active, char_map));
+              if (cost_to_current < min_g) {
+                min_g = cost_to_current;
+                best_parent = nbr_node;
               }
             }
           }
         }
 
         if (best_parent) {
-          active_node->g_cost = min_g;
-          active_node->prev = best_parent;
+          active->g_cost = min_g;
+          g_score_cache_[active_idx] = min_g;
+          active->prev = best_parent;
         } else {
-          // Unreachable cell; discard and close
-          visited[active_idx] = true;
-          continue;
+          // FIX: Mark node closed before skipping to prevent queue pollution/loops
+          closed_cache_[active_idx] = 1;
+          continue; 
         }
       }
     }
 
-    // Mark node as closed/visited
-    visited[active_idx] = true;
-
     // --------------------------------------------------
-    // 2. GOAL CHECK
+    // GOAL CHECK
     // --------------------------------------------------
-    if (*active_node == *goal_node) {
-      return active_node;
+    if (active->x == goal_node->x && active->y == goal_node->y) {
+      return active; // Path extraction target
     }
+
+    closed_cache_[active_idx] = 1;
 
     // --------------------------------------------------
     // 3. EXPAND NEIGHBORS (OPTIMISTIC UPDATE)
     // --------------------------------------------------
-    for (const auto &dir : explore_directions) {
-      GridNode neighbor_pos = *active_node + dir.dir;
-      int neighbor_idx = gridToMapIndex(neighbor_pos);
+    for (const auto & d : dirs)
+    {
+      int nx = active->x + d.dx;
+      int ny = active->y + d.dy;
 
-      if (!visited[neighbor_idx] && isGridOnMap(neighbor_pos) && isMapCellFree(neighbor_pos, char_map)){
-        // Optimistic assumption: Try active_node's parent if present, else active_node
-        std::shared_ptr<GridNode> optimistic_parent = (active_node->prev != nullptr) 
-                                                      ? active_node->prev 
-                                                      : active_node;
+      GridNode nbr_pos(nx, ny);
+      int nbr_idx = gridToMapIndex(nbr_pos);
 
-        double dist = euclidean_distance(*optimistic_parent, neighbor_pos);
-        double grid_cost_factor = getGridCost(neighbor_pos, char_map);
-        double new_cost = optimistic_parent->g_cost + (dist * grid_cost_factor);
+      if (!(closed_cache_[nbr_idx] == 1) && isGridOnMap(nbr_pos) && isMapCellFree(nbr_pos, char_map)) {
+        GridNode* optimistic_parent = active->prev ? active->prev : active;
+        GridNode* neighbor_node = get_node_from_pool(nx, ny, nbr_idx);
 
-        auto neighbor_node = node_lookup[neighbor_idx];
+        double optimistic_parent_g = g_score_cache_[gridToMapIndex(*optimistic_parent)];
 
-        if (!neighbor_node || new_cost < neighbor_node->g_cost) {
-          if (!neighbor_node) {
-            neighbor_node = std::make_shared<GridNode>(neighbor_pos);
-          }
+        // Combine geometric distance from line-of-sight optimistic_parent with local terrain penalty
+        double dist = euclidean_distance(*optimistic_parent, nbr_pos);
+        double grid_cost_factor = getGridCost(nbr_pos, char_map);
+        double new_cost = optimistic_parent_g + (dist * grid_cost_factor);
+
+        double current_neighbor_g = g_score_cache_[nbr_idx];
+        if (current_neighbor_g < 0.0 || new_cost < current_neighbor_g)
+        {
+          g_score_cache_[nbr_idx] = new_cost;
 
           neighbor_node->g_cost = new_cost;
           neighbor_node->h_cost = euclidean_distance(*neighbor_node, *goal_node);
           neighbor_node->prev = optimistic_parent;
 
-          node_lookup[neighbor_idx] = neighbor_node;
-          nodes_to_explore.push(neighbor_node);
+          open.push(neighbor_node);
         }
       }
     }
   }
 
-  return nullptr;
+  return nullptr; // Goal unreachable
 }
 
 //--------------------------------------------------------------
@@ -336,19 +396,19 @@ bool LazyThetaPlanner::isMapCellFree(const GridNode &grid, const unsigned char* 
 }
 
 double LazyThetaPlanner::euclidean_distance(const GridNode &a, const GridNode &b){
-  return std::hypot(a.x - b.x, a.y - b.y);
+  double dx = static_cast<double>(a.x - b.x);
+  double dy = static_cast<double>(a.y - b.y);
+  return std::sqrt(dx * dx + dy * dy);
 }
 
 
 bool LazyThetaPlanner::lineOfSight(
-  const GridNode &start, 
-  const GridNode &end,
+  int x0, int y0, 
+  int x1, int y1,
   const unsigned char* char_map,
   unsigned int size_x,
   bool relax) const
 {
-  int x0 = start.x; int y0 = start.y;
-  int x1 = end.x; int y1 = end.y;
 
   int dx = std::abs(x1 - x0);
   int dy = std::abs(y1 - y0);
@@ -359,7 +419,7 @@ bool LazyThetaPlanner::lineOfSight(
   int stride_x = sx; 
   int stride_y = sy * static_cast<int>(size_x);
 
-  int current_idx = y0 * size_x + x0;
+  int active_idx = y0 * size_x + x0;
 
   int max_x = static_cast<int>(costmap_meta_.size_x);
   int max_y = static_cast<int>(costmap_meta_.size_y);
@@ -372,12 +432,12 @@ bool LazyThetaPlanner::lineOfSight(
     }
 
     if(relax){
-      if (char_map[current_idx] > static_cast<unsigned char>(los_shortcut_cost_limit_+120)) {
+      if (char_map[active_idx] > static_cast<unsigned char>(los_shortcut_cost_limit_+120)) {
         return false;
       }
     }
     else {
-      if (char_map[current_idx] > static_cast<unsigned char>(los_shortcut_cost_limit_)) {
+      if (char_map[active_idx] > static_cast<unsigned char>(los_shortcut_cost_limit_)) {
         return false;
       }
     }
@@ -390,12 +450,12 @@ bool LazyThetaPlanner::lineOfSight(
     if (e2 > -dy) { 
       err -= dy; 
       x0 += sx; 
-      current_idx += stride_x; 
+      active_idx += stride_x; 
     }
     if (e2 < dx)  { 
       err += dx; 
       y0 += sy; 
-      current_idx += stride_y; 
+      active_idx += stride_y; 
     }
   }
 

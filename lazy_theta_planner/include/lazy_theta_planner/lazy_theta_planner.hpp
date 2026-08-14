@@ -27,48 +27,15 @@ namespace lazy_theta_planner
 
 struct GridNode
 {
-  int x;
-  int y;
-  double g_cost;
-  double h_cost;
-  std::shared_ptr<GridNode> prev;
+  int x{0};
+  int y{0};
 
-  GridNode(int x_in, int y_in) : x(x_in), y(y_in), g_cost(0), h_cost(0)
-  {}
+  double g_cost{0.0};
+  double h_cost{0.0};
 
-  GridNode() : GridNode(0, 0)
-  {}
+  GridNode *prev{nullptr};
 
-  bool operator>(const GridNode &other) const 
-  {
-    return (this->g_cost + this->h_cost) > (other.g_cost + other.h_cost);
-  }
-
-  bool operator==(const GridNode &other) const 
-  {
-    return (this->x == other.x) && (this->y == other.y);
-  }
-
-  GridNode operator+(std::pair<int, int> const &other) const
-  {
-    GridNode result(this->x+other.first, this->y+other.second);
-    return result;
-  }
-
-  GridNode operator+(const GridNode &other) const
-  {
-    GridNode result(this->x+other.x, this->y+other.y);
-    return result;
-  }
-};
-
-struct DirNode
-{
-  std::pair<int, int> dir;
-  int t_cost;
-
-  DirNode(std::pair<int, int> dir_, int t_cost_) : dir(dir_), t_cost(t_cost_)
-  {}
+  GridNode(int _x = 0, int _y = 0) : x(_x), y(_y) {}
 };
 
 
@@ -115,11 +82,22 @@ public:
     const geometry_msgs::msg::PoseStamped & goal,
     std::function<bool()> cancel_checker) override;
 
+  struct CompareNode
+  {
+    bool operator()(
+      const GridNode* a,
+      const GridNode* b) const
+    {
+      // Keeps the evaluation simple and fast for priority sorting tree shifts
+      return (a->g_cost + a->h_cost) > (b->g_cost + b->h_cost);
+    }
+  };
+
 protected:
 
-  std::shared_ptr<GridNode> runLazyThetaStarPlan(
-    std::shared_ptr<GridNode> start_node,
-    std::shared_ptr<GridNode> goal_node,
+  GridNode* runLazyThetaStarPlan(
+    GridNode* start_node,
+    GridNode* goal_node,
     const std::function<bool()>& cancel_checker,
     const unsigned char* char_map,
     unsigned int size_x);
@@ -139,8 +117,8 @@ protected:
   double euclidean_distance(const GridNode &a, const GridNode &b);
 
   bool lineOfSight(
-    const GridNode &start, 
-    const GridNode &end,
+    int x0, int y0, 
+    int x1, int y1,
     const unsigned char* char_map,
     unsigned int size_x,
     bool relax=false) const;
@@ -158,6 +136,15 @@ protected:
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros_;
 
   CostmapMeta costmap_meta_;
+
+  std::vector<GridNode> node_pool_;
+
+  std::vector<bool> node_initialized_; 
+
+  // --- OVERHAULED FIXED CACHES ---
+  std::vector<double> g_score_cache_;
+
+  std::vector<uint8_t> closed_cache_;
 
   int los_shortcut_cost_limit_;
 
