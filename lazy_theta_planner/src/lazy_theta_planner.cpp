@@ -511,7 +511,7 @@ LazyThetaPlanner::fillUpPath(
     auto seg = addStraightLinePoses(
       path.poses[i - 1],
       path.poses[i],
-      costmap_ros_->getCostmap()->getResolution());
+      costmap_meta_.resolution);
 
     filled.poses.insert(filled.poses.end(), seg.begin(), seg.end());
   }
