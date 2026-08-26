@@ -53,8 +53,8 @@ def generate_launch_description():
   
   declare_nav_params_cmd = DeclareLaunchArgument(
       name='nav_params',
-      # default_value=nav_params_file,
-      default_value=rewritten_nav_params_file,
+      default_value=nav_params_file,
+      # default_value=rewritten_nav_params_file,
       description='file path to the parameter file'
     )
   

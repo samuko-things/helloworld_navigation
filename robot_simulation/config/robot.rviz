@@ -313,29 +313,6 @@ Visualization Manager:
       Class: rviz_default_plugins/Map
       Color Scheme: costmap
       Draw Behind: false
-      Enabled: true
-      Name: CostMap
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /costmap
-      Update Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /costmap_updates
-      Use Timestamp: false
-      Value: true
-    - Alpha: 0.699999988079071
-      Binary representation: false
-      Binary threshold: 100
-      Class: rviz_default_plugins/Map
-      Color Scheme: costmap
-      Draw Behind: false
       Enabled: false
       Name: D-VisitedMap
       Topic:
@@ -446,13 +423,13 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /theta_star/visited_map
+        Value: /test_planner/visited_map
       Update Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /theta_star/visited_map_updates
+        Value: /test_planner/visited_map_updates
       Use Timestamp: false
       Value: true
     - Alpha: 1
@@ -464,7 +441,7 @@ Visualization Manager:
       Head Length: 0.20000000298023224
       Length: 0.30000001192092896
       Line Style: Billboards
-      Line Width: 0.019999999552965164
+      Line Width: 0.05000000074505806
       Name: T-Path
       Offset:
         X: 0
@@ -481,7 +458,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /theta_star/path
+        Value: /test_planner/path
       Value: true
   Enabled: true
   Global Options:
@@ -538,11 +515,11 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 48.94504165649414
+      Scale: 70.05329895019531
       Target Frame: <Fixed Frame>
       Value: TopDownOrtho (rviz_default_plugins)
-      X: -0.17323240637779236
-      Y: -0.2428259551525116
+      X: 1.7009954452514648
+      Y: 0.007344821467995644
     Saved: ~
 Window Geometry:
   Displays:

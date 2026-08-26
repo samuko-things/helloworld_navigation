@@ -95,7 +95,35 @@ public:
 
 protected:
 
+  GridNode* runAStarPlan(
+    GridNode* start_node,
+    GridNode* goal_node,
+    const std::function<bool()>& cancel_checker,
+    const unsigned char* char_map,
+    unsigned int size_x,
+    bool smooth=true);
+
+  GridNode* greedyStringPullSmooth(
+    GridNode* grid_node_path,
+    const std::function<bool()>& cancel_checker,
+    const unsigned char* char_map,
+    unsigned int size_x);
+
   GridNode* runLazyThetaStarPlan(
+    GridNode* start_node,
+    GridNode* goal_node,
+    const std::function<bool()>& cancel_checker,
+    const unsigned char* char_map,
+    unsigned int size_x);
+
+  GridNode* runDRSPPlan(
+    GridNode* start_node,
+    GridNode* goal_node,
+    const std::function<bool()>& cancel_checker,
+    const unsigned char* char_map,
+    unsigned int size_x);
+
+  GridNode* runDRSPPlanTest(
     GridNode* start_node,
     GridNode* goal_node,
     const std::function<bool()>& cancel_checker,
@@ -129,22 +157,32 @@ protected:
     const geometry_msgs::msg::PoseStamped & end,
     double resolution) const;
 
-  nav_msgs::msg::Path fillUpPath(
+  nav_msgs::msg::Path densifyPath(
     const nav_msgs::msg::Path & path, 
     const geometry_msgs::msg::PoseStamped & goal) const;
+
+  nav_msgs::msg::Path smoothPath(
+    const nav_msgs::msg::Path & path,
+    double w_data=0.2,
+    double w_smooth=0.4,
+    int max_iterations=1000,
+    double tolerance=1e-5) const;
+
+  nav_msgs::msg::Path fillUpPath(
+    const nav_msgs::msg::Path & path, 
+    const geometry_msgs::msg::PoseStamped & goal,
+    bool smooth=true) const;
+
+  GridNode* get_node_from_pool(int x, int y, int index);
 
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros_;
 
   CostmapMeta costmap_meta_;
 
   std::vector<GridNode> node_pool_;
-
   std::vector<bool> node_initialized_; 
-
-  // --- OVERHAULED FIXED CACHES ---
-  std::vector<double> g_score_cache_;
-
-  std::vector<uint8_t> closed_cache_;
+  std::vector<double> g_cost_cache_;
+  std::vector<bool> visited_;
 
   int los_shortcut_cost_limit_;
 

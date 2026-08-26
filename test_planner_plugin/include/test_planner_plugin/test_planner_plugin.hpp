@@ -62,6 +62,12 @@ struct GridNode
   }
 };
 
+struct DataGreater {
+    bool operator()(const std::shared_ptr<GridNode>& a, const std::shared_ptr<GridNode>& b) const {
+        return *a > *b;
+    }
+};
+
 struct DirNode
 {
   std::pair<int, int> dir;
@@ -186,6 +192,8 @@ protected:
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros_;
 
   CostmapMeta costmap_meta_;
+  std::vector<std::shared_ptr<GridNode>> node_lookup_;
+  std::vector<bool> visited_;
 
   int los_shortcut_cost_limit_;
 
