@@ -1,0 +1,27 @@
+maps_manager_node:
+  ros__parameters:
+    use_sim_time: false
+    map_types: [costmap, routes]
+    routes:
+      freq: 10.0
+      plugin: easynav_routes_maps_manager/RoutesMapsManager
+      filters: [routes_costmap]
+      routes_costmap:
+        plugin: easynav_routes_maps_manager/RoutesCostmapFilter
+        min_cost: 50
+        route_width: 0.5
+      cycle_time_nort: 0.001
+      cycle_time_rt: 0.001
+    costmap:
+      freq: 10.0
+      plugin: easynav_costmap_maps_manager/CostmapMapsManager
+      package: robot_navigation
+      map_path_file: maps/room_with_walls.yaml
+      filters: [obstacles, inflation]
+      obstacles:
+        plugin: easynav_costmap_maps_manager/CostmapMapsManager/ObstaclesFilter
+      inflation:
+        plugin: easynav_costmap_maps_manager/CostmapMapsManager/InflationFilter
+        inflation_radius: 0.5
+        inscribed_radius: 0.25
+        cost_scaling_factor: 3.0

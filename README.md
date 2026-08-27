@@ -53,12 +53,20 @@ ros2 launch robot_simulation sim.launch.py #gui:=false
 ros2 launch robot_navigation mapping.launch.py #use_costmap:=true
 ```
 
-- run navigation (simple or costmap)
+- run navigation (simple map)
 ```shell
 ros2 launch robot_simulation sim.launch.py #gui:=false
 ```
 ```shell
-ros2 launch robot_navigation easynav.launch.py #use_costmap:=true
+ros2 launch robot_navigation easynav_simple.launch.py
+```
+
+- run navigation (costmap map)
+```shell
+ros2 launch robot_simulation sim.launch.py #gui:=false
+```
+```shell
+ros2 launch robot_navigation easynav_costmap.launch.py #use_route:=true
 ```
 
 ---
@@ -76,4 +84,21 @@ mv /tmp/default.map ~/<ros_ws>/src/helloworld_navigation/robot_navigation/maps/<
 - save costmap map in easynav with slamtoolbox
 ```shell
 ros2 service call /slam_toolbox/save_map slam_toolbox/srv/SaveMap "{name: {data: '/home/$USER/ros_ws/src/helloworld_navigation/robot_navigation/maps/room_with_walls'}}"
+```
+
+---
+
+#### Create and Save Routes
+
+- create routes (use interractive marker to add and remove routes)
+```shell
+ros2 launch robot_navigation easynav_create_routes.launch.py 
+```
+
+- save route yaml file
+```shell
+ros2 service call /maps_manager_node/routes/save_routes std_srvs/srv/Trigger {}
+```
+```shell
+mv /tmp/routes.yaml ~/<ros_ws>/src/helloworld_navigation/robot_navigation/maps/<route_name>.yaml
 ```

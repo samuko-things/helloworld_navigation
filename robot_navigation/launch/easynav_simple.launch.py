@@ -28,8 +28,6 @@ def generate_launch_description():
     robot_nav_pkg_path = get_package_share_directory('robot_navigation')
 
     simple_params_file = LaunchConfiguration('simple_params_file')
-    costmap_params_file = LaunchConfiguration('costmap_params_file')
-    use_costmap = LaunchConfiguration('use_costmap')
     # rviz_config = LaunchConfiguration('rviz_config')
 
 
@@ -38,17 +36,6 @@ def generate_launch_description():
                 default_value=os.path.join(
                     robot_nav_pkg_path, 'config', 'easynav_simple_params.yaml'),
                 description='Full path to the ROS2 parameters file for easynav',)
-    
-    declare_costmap_params_file_cmd = DeclareLaunchArgument(
-            'costmap_params_file',
-            default_value=os.path.join(
-                robot_nav_pkg_path, 'config', 'easynav_costmap_params.yaml'),
-            description='Full path to the ROS2 parameters file for easynav',)
-
-    declare_use_costmap_argument = DeclareLaunchArgument(
-            'use_costmap',
-            default_value='false',
-            description='use easynav costmap if true')
     
 
     # declare_rviz_config_cmd = DeclareLaunchArgument(
@@ -66,18 +53,6 @@ def generate_launch_description():
         remappings=[
             ('/cmd_vel', '/cmd_vel_easynav'),
         ],
-        condition=UnlessCondition(use_costmap)
-    )
-
-    easynav_system_costmap = Node(
-        package='easynav_system',
-        executable='system_main',
-        parameters=[costmap_params_file],
-        output='screen',
-        remappings=[
-            ('/cmd_vel', '/cmd_vel_easynav'),
-        ],
-        condition=IfCondition(use_costmap)
     )
 
     twist_stamper = Node(
@@ -105,12 +80,9 @@ def generate_launch_description():
     ld = LaunchDescription()
 
     ld.add_action(declare_simple_params_file_cmd)
-    ld.add_action(declare_costmap_params_file_cmd)
-    ld.add_action(declare_use_costmap_argument)
     # ld.add_action(declare_rviz_config_cmd)
 
     ld.add_action(easynav_system_simple)
-    ld.add_action(easynav_system_costmap)
     ld.add_action(twist_stamper)
     # ld.add_action(rviz_cmd)
 
