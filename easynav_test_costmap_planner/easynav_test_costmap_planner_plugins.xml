@@ -1,0 +1,9 @@
+<class_libraries>
+  <library path="easynav_test_costmap_planner">
+    <class name="easynav_test_costmap_planner/TestCostmapPlanner"  type="easynav::TestCostmapPlanner" base_class_type="easynav::PlannerMethodBase">
+      <description>
+      A default "costmap" implementation for the DRSP path planner.
+      </description>
+    </class>
+  </library>
+</class_libraries>

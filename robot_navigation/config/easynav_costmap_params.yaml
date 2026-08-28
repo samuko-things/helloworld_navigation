@@ -95,7 +95,8 @@ planner_node:
     planner_types: [costmap]
     costmap:
       freq: 0.5
-      plugin: easynav_costmap_planner/CostmapPlanner
+      # plugin: easynav_costmap_planner/CostmapPlanner
+      plugin: easynav_test_costmap_planner/TestCostmapPlanner
       cost_factor: 10.0
       continuous_replan: true
 

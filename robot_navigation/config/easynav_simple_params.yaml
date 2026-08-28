@@ -80,7 +80,8 @@ planner_node:
     planner_types: [simple]
     simple:
       freq: 0.5
-      plugin: easynav_simple_planner/SimplePlanner
+      # plugin: easynav_simple_planner/SimplePlanner
+      plugin: easynav_test_simple_planner/TestSimplePlanner
       robot_radius: 0.15
 
 sensors_node:
