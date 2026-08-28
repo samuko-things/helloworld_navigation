@@ -32,28 +32,6 @@
 namespace easynav
 {
 
-struct GridNode
-{
-  int x, y;
-  double cost;
-  double priority;
-  bool operator>(const GridNode & other) const
-  {
-    return priority > other.priority;
-  }
-};
-
-static double heuristic(int x1, int y1, int x2, int y2)
-{
-  return std::hypot(x2 - x1, y2 - y1);
-}
-
-static std::vector<std::pair<int, int>> neighbors8 = {
-  {-1, -1}, {-1, 0}, {-1, 1},
-  {0, -1}, {0, 1},
-  {1, -1}, {1, 0}, {1, 1}
-};
-
 static double compute_path_length(const nav_msgs::msg::Path & path)
 {
   double total_length = 0.0;
@@ -155,6 +133,24 @@ void TestCostmapPlanner::update(NavState & nav_state)
   const auto & goal = goals.goals.front().pose;
   const auto & tf_info = RTTFBuffer::getInstance()->get_tf_info();
 
+
+  costmap_meta_.update(map);
+  unsigned int map_size = costmap_meta_.size_x * costmap_meta_.size_y;
+
+  // Fallback memory check in case the costmap dynamically resizes during runtime
+  if (node_pool_.size() != map_size) {
+    node_pool_.resize(map_size);
+    node_initialized_.resize(map_size);
+    g_cost_cache_.resize(map_size);
+    visited_.resize(map_size);
+  }
+
+  // --- FAST FLAT MEMORY RESETS ---
+  std::fill(node_initialized_.begin(), node_initialized_.end(), false);
+  std::fill(visited_.begin(), visited_.end(), false);
+  std::fill(g_cost_cache_.begin(), g_cost_cache_.end(), -1.0);
+
+
   rclcpp::Time latest_stamp = nav_state.get<rclcpp::Time>("map_time");
   if (rclcpp::Time(robot_pose.header.stamp, latest_stamp.get_clock_type()) > latest_stamp) {
     latest_stamp = rclcpp::Time(robot_pose.header.stamp, latest_stamp.get_clock_type());
@@ -222,7 +218,7 @@ void TestCostmapPlanner::update(NavState & nav_state)
     }
   }
 
-  auto poses = a_star_path(map, robot_pose.pose.pose, goal);
+  auto poses = plan_path(map, robot_pose.pose.pose, goal);
   if (!poses.empty()) {
     // Apply a light smoothing to the raw grid path
     smooth_path(poses);
@@ -253,7 +249,7 @@ void TestCostmapPlanner::update(NavState & nav_state)
   nav_state.set("path", current_path_);
 }
 
-std::vector<geometry_msgs::msg::Pose> TestCostmapPlanner::a_star_path(
+std::vector<geometry_msgs::msg::Pose> TestCostmapPlanner::plan_path(
   const Costmap2D & map,
   const geometry_msgs::msg::Pose & start,
   const geometry_msgs::msg::Pose & goal)
@@ -262,164 +258,297 @@ std::vector<geometry_msgs::msg::Pose> TestCostmapPlanner::a_star_path(
   if (!map.worldToMap(start.position.x, start.position.y, sx, sy)) {return {};}
   if (!map.worldToMap(goal.position.x, goal.position.y, gx, gy)) {return {};}
 
-  int width = map.getSizeInCellsX();
-  // Precompute constants used inside the neighbor loop
-  // const double axial_cost = 1.0;
-  // const double diagonal_cost = std::sqrt(2.0);
-  map_resolution = map.getResolution();
+  // Start & Goal Node Setup
+  GridNode raw_start(static_cast<int>(sx), static_cast<int>(sy));
+  int start_idx = gridToMapIndex(raw_start);
+  GridNode* start_node = get_node_from_pool(raw_start.x, raw_start.y, start_idx);
 
-  auto idx = [&](int x, int y) {return y * width + x;};
+  GridNode raw_goal(static_cast<int>(gx), static_cast<int>(gy));
+  int goal_idx = gridToMapIndex(raw_goal);
+  GridNode* goal_node = get_node_from_pool(raw_goal.x, raw_goal.y, goal_idx);
 
-  std::priority_queue<GridNode, std::vector<GridNode>, std::greater<>> open;
+  const unsigned char* char_map = map.getCharMap();
 
-  const int height = map.getSizeInCellsY();
-  const int total_cells = width * height;
-  std::vector<int> gparent_x(total_cells, -1);
-  std::vector<int> gparent_y(total_cells, -1);
-  std::vector<int> parent_x(total_cells, -1);
-  std::vector<int> parent_y(total_cells, -1);
-  std::vector<double> cost_so_far(total_cells, std::numeric_limits<double>::infinity());
-  std::vector<bool> visited(total_cells, false);
+  GridNode* best_goal = runDRSPPlan(
+    start_node, 
+    goal_node, 
+    char_map, 
+    costmap_meta_.size_x
+  );
 
-  const double initial_h = heuristic(static_cast<int>(sx), static_cast<int>(sy),
-      static_cast<int>(gx), static_cast<int>(gy)) * heuristic_scale_;
-  open.push(GridNode{static_cast<int>(sx), static_cast<int>(sy), 0.0, initial_h});
-  cost_so_far[idx(sx, sy)] = 0.0;
-
-  while (!open.empty()) {
-    auto current = open.top();
-    open.pop();
-    int cid = idx(current.x, current.y);
-
-    if (visited[cid]) {
-      continue;
-    }
-
-    if (current.cost > cost_so_far[cid]) {
-      continue;
-    }
-
-    if((parent_x[cid] != -1 && parent_y[cid] != -1) && (gparent_x[cid] != -1 && gparent_y[cid] != -1)) {
-      if(lineOfSight(current.x, current.y, gparent_x[cid], gparent_y[cid], map)) {
-        parent_x[cid] = gparent_x[cid];
-        parent_y[cid] = gparent_y[cid];
-      }
-    }
-
-    if (current.x == static_cast<int>(gx) && current.y == static_cast<int>(gy)) {break;}
-
-    visited[cid] = true;
-
-    for (auto [dx, dy] : neighbors8) {
-      int nx = current.x + dx;
-      int ny = current.y + dy;
-      int nid = idx(nx, ny);
-
-      if (!map.inBounds(nx, ny)) {continue;}
-
-      uint8_t cell_cost = map.getCost(nx, ny);
-      // Reject cells that would cause collision (>= INSCRIBED_INFLATED_OBSTACLE = 253)
-      if (cell_cost >= INSCRIBED_INFLATED_OBSTACLE) {continue;}
-
-      if (!visited[cid]) {continue;}
-
-      int assumed_gparent_x = (parent_x[cid] != -1) ? parent_x[cid] : current.x;
-      int assumed_gparent_y = (parent_y[cid] != -1) ? parent_y[cid] : current.y;
-      int gid = idx(assumed_gparent_x, assumed_gparent_y);
-
-      // Calculate traversal cost: cost_factor_ acts as a direct multiplier on cell cost
-      double traversal_cost = 1.0 + cost_factor_ * static_cast<double>(cell_cost);
-
-      double new_cost = cost_so_far[gid] + traversal_cost * heuristic(assumed_gparent_x, assumed_gparent_y, nx, ny);
-
-      if (new_cost < cost_so_far[nid]) {
-        cost_so_far[nid] = new_cost;
-        const double h = heuristic(nx, ny, static_cast<int>(gx), static_cast<int>(gy)) *
-          heuristic_scale_;
-        open.push(GridNode{nx, ny, new_cost, new_cost + h});
-        parent_x[nid] = current.x;
-        parent_y[nid] = current.y;
-      }
-    }
-  }
-
+  // Path Reconstruction
   std::vector<geometry_msgs::msg::Pose> path;
-  int cx = static_cast<int>(gx), cy = static_cast<int>(gy);
-  while (parent_x[idx(cx, cy)] != -1) {
-    double wx, wy;
-    map.mapToWorld(cx, cy, wx, wy);
-    geometry_msgs::msg::Pose pose;
-    pose.position.x = wx;
-    pose.position.y = wy;
-    pose.orientation = goal.orientation;
-    path.push_back(pose);
-    int px = parent_x[idx(cx, cy)];
-    int py = parent_y[idx(cx, cy)];
-    cx = px;
-    cy = py;
+
+  if (!best_goal) {
+    return path;
   }
+
+  GridNode* node = best_goal;
+  while (node)
+  {
+    geometry_msgs::msg::Pose pose;
+    pose = gridToPose(*node);
+    path.push_back(pose);
+
+    if (node->prev == node) {
+      break;
+    }
+    node = node->prev;
+  }
+
   std::reverse(path.begin(), path.end());
-
-  if (path.empty()) {path.push_back(goal);}
-
   return densifyPath(path, goal);
 }
 
 
-bool 
-TestCostmapPlanner::lineOfSight(
+
+
+
+
+
+
+
+
+
+
+/* --------------------- NEW FUNCTIONS ------------------------------ */
+
+GridNode* TestCostmapPlanner::runDRSPPlan(
+  GridNode* start_node,
+  GridNode* goal_node,
+  const unsigned char* char_map,
+  unsigned int size_x)
+{
+  std::priority_queue<
+    GridNode*,
+    std::vector<GridNode*>,
+    TestCostmapPlanner::CompareNode
+  > open;
+
+  int start_idx = gridToMapIndex(*start_node);
+
+  start_node->g_cost = 0.0;
+  start_node->h_cost = euclidean_distance(*start_node, *goal_node);
+  start_node->prev = start_node;
+
+  open.push(start_node);
+  g_cost_cache_[start_idx] = 0.0;
+
+  static const struct { int dx; int dy; double dist; } dirs[] = {
+    {-1,  0, 1.0},
+    {1,  0, 1.0},
+    {0, -1, 1.0},
+    {0,  1, 1.0},
+    {-1, -1, 1.4142},
+    {-1, 1, 1.4142},
+    {1, -1, 1.4142},
+    {1,  1, 1.4142}
+  };
+
+  while (!open.empty())
+  {
+    GridNode* active = open.top();
+    open.pop();
+
+    int active_idx = gridToMapIndex(*active);
+
+    if (visited_[active_idx]) {
+      continue;
+    }
+
+    if (active->g_cost > g_cost_cache_[active_idx]) {
+      continue;
+    }
+
+    if (active->prev && active->prev->prev)
+    {
+      auto actual_grandparent = active->prev->prev;
+      if (lineOfSight(active->x, active->y, actual_grandparent->x, actual_grandparent->y, char_map, size_x))
+      {
+        active->prev = actual_grandparent;
+      }
+      else
+      {
+        double min_g = std::numeric_limits<double>::infinity();
+        GridNode* best_fallback_parent = nullptr;
+
+        for (const auto & d : dirs)
+        {
+          int nx = active->x + d.dx;
+          int ny = active->y + d.dy;
+          GridNode nbr_pos(nx, ny);
+          int nbr_idx = gridToMapIndex(nbr_pos);
+
+          if (isGridOnMap(nbr_pos) && isMapCellFree(nbr_pos, char_map) && visited_[nbr_idx])
+          {
+            GridNode* nbr_node = &node_pool_[nbr_idx];
+            double g_val = g_cost_cache_[nbr_idx];
+            double cost_to_active = g_val + (d.dist * getGridCost(*active, char_map));
+            if (cost_to_active < min_g) {
+              min_g = cost_to_active;
+              best_fallback_parent = nbr_node;
+            }
+          }
+        }
+
+        if (best_fallback_parent) {
+          active->g_cost = min_g;
+          g_cost_cache_[active_idx] = min_g;
+          active->prev = best_fallback_parent;
+        }
+      }
+    }
+
+    if (active->x == goal_node->x && active->y == goal_node->y) {
+      return active;
+    }
+
+    visited_[active_idx] = true;
+
+    for (const auto & d : dirs)
+    {
+      int nx = active->x + d.dx;
+      int ny = active->y + d.dy;
+
+      GridNode nbr_pos(nx, ny);
+      int nbr_idx = gridToMapIndex(nbr_pos);
+
+      if (isGridOnMap(nbr_pos) && isMapCellFree(nbr_pos, char_map) && !visited_[nbr_idx]) {
+        GridNode* assumed_grandparent = active->prev ? active->prev : active;
+        GridNode* neighbor_node = get_node_from_pool(nx, ny, nbr_idx);
+
+        double new_g_cost = assumed_grandparent->g_cost + (euclidean_distance(nbr_pos, *(assumed_grandparent)) * getGridCost(nbr_pos, char_map));
+        double nbr_g_cost = g_cost_cache_[nbr_idx];
+
+        if (nbr_g_cost < 0.0 || new_g_cost < nbr_g_cost)
+        {
+          g_cost_cache_[nbr_idx] = new_g_cost;
+
+          neighbor_node->g_cost = new_g_cost;
+          neighbor_node->h_cost = euclidean_distance(*neighbor_node, *goal_node);
+          // update prev node as the actual parent, not the assumed grandparent
+          neighbor_node->prev = active;
+
+          open.push(neighbor_node);
+        }
+      }
+    }
+  }
+
+  return nullptr;
+}
+
+
+GridNode TestCostmapPlanner::poseToGrid(const geometry_msgs::msg::Pose &pose)
+{
+  int gx = static_cast<int>((pose.position.x - costmap_meta_.origin_x) * costmap_meta_.inv_resolution);
+  int gy = static_cast<int>((pose.position.y - costmap_meta_.origin_y) * costmap_meta_.inv_resolution);
+
+  return GridNode(gx, gy);
+}
+
+geometry_msgs::msg::Pose TestCostmapPlanner::gridToPose(const GridNode &grid)
+{
+  geometry_msgs::msg::Pose pose;
+  pose.position.x = grid.x * costmap_meta_.resolution + costmap_meta_.origin_x;
+  pose.position.y = grid.y * costmap_meta_.resolution + costmap_meta_.origin_y;
+  pose.position.z = 0.0;
+
+  return pose;
+}
+
+int TestCostmapPlanner::gridToMapIndex(const GridNode &grid_node)
+{
+  return static_cast<int>(grid_node.y * costmap_meta_.size_x + grid_node.x);
+}
+
+bool TestCostmapPlanner::isGridOnMap(const GridNode &grid)
+{
+  return (grid.x >= 0 && grid.x < costmap_meta_.size_x &&
+          grid.y >= 0 && grid.y < costmap_meta_.size_y);
+}
+
+double TestCostmapPlanner::getGridCost(const GridNode &grid, const unsigned char* char_map)
+{
+  return  1.0+(cost_travel_multiplier_ * std::clamp(static_cast<double>(char_map[gridToMapIndex(grid)]) / 252.0, 0.0, 1.0));
+}
+
+bool TestCostmapPlanner::isMapCellFree(const GridNode &grid, const unsigned char* char_map)
+{
+  return /*(char_map[gridToMapIndex(grid)] >= 0) &&*/ (char_map[gridToMapIndex(grid)] < static_cast<unsigned char>(los_shortcut_cost_limit_+120));
+}
+
+double TestCostmapPlanner::euclidean_distance(const GridNode &a, const GridNode &b){
+  double dx = static_cast<double>(a.x - b.x);
+  double dy = static_cast<double>(a.y - b.y);
+  return std::sqrt(dx * dx + dy * dy);
+}
+
+
+bool TestCostmapPlanner::lineOfSight(
   int x0, int y0, 
   int x1, int y1,
-  const Costmap2D & map)
+  const unsigned char* char_map,
+  unsigned int size_x) const
 {
+
   int dx = std::abs(x1 - x0);
   int dy = std::abs(y1 - y0);
   int sx = (x0 < x1) ? 1 : -1;
   int sy = (y0 < y1) ? 1 : -1;
   int err = dx - dy;
 
-  int max_x = static_cast<int>(map.getSizeInCellsX());
-  int max_y = static_cast<int>(map.getSizeInCellsY());
+  int stride_x = sx; 
+  int stride_y = sy * static_cast<int>(size_x);
+
+  int active_idx = y0 * size_x + x0;
+
+  int max_x = static_cast<int>(costmap_meta_.size_x);
+  int max_y = static_cast<int>(costmap_meta_.size_y);
 
   while (true)
   {
-    // 1. Boundary check
+    // Safety Guard: Check map boundaries before reading char_map
     if (x0 < 0 || x0 >= max_x || y0 < 0 || y0 >= max_y) {
       return false;
     }
 
-    // 2. Cost threshold check (Adjust 254 / LETHAL_OBSTACLE to preferred threshold)
-    if (map.getCost(x0, y0) >= 10) {
+    if (char_map[active_idx] > static_cast<unsigned char>(los_shortcut_cost_limit_)) {
       return false;
     }
 
-    // Target reached
     if (x0 == x1 && y0 == y1) {
       break;
     }
 
     int e2 = 2 * err;
-
-    // Prevent diagonal corner-cutting by handling steps strictly
-    if (e2 > -dy && e2 < dx) {
-      // Handles strictly diagonal step: check intermediate orthogonal steps if needed
-      err -= dy;
-      x0 += sx;
-      err += dx;
-      y0 += sy;
-    } else {
-      if (e2 > -dy) { 
-        err -= dy; 
-        x0 += sx; 
-      }
-      if (e2 < dx)  { 
-        err += dx; 
-        y0 += sy; 
-      }
+    if (e2 > -dy) { 
+      err -= dy; 
+      x0 += sx; 
+      active_idx += stride_x; 
+    }
+    if (e2 < dx)  { 
+      err += dx; 
+      y0 += sy; 
+      active_idx += stride_y; 
     }
   }
 
   return true;
+}
+
+
+GridNode* TestCostmapPlanner::get_node_from_pool(int x, int y, int index) {
+  GridNode* node = &node_pool_[index];
+  if (!node_initialized_[index]) {
+    node->x = x;
+    node->y = y;
+    node->g_cost = std::numeric_limits<double>::max();
+    node->h_cost = 0.0;
+    node->prev = nullptr;
+    node_initialized_[index] = true;
+  }
+  return node;
 }
 
 
@@ -472,7 +601,7 @@ TestCostmapPlanner::densifyPath(
     auto seg = addStraightLinePoses(
       poses[i - 1],
       poses[i],
-      map_resolution);
+      costmap_meta_.resolution);
 
     dense_poses.insert(dense_poses.end(), seg.begin(), seg.end());
   }
@@ -498,6 +627,7 @@ TestCostmapPlanner::densifyPath(
   return dense_poses;
 }
 
+/* --------------------- NEW FUNCTIONS ------------------------------ */
 
 }  // namespace easynav
 
