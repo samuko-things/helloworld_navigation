@@ -30,6 +30,41 @@
 namespace easynav
 {
 
+struct GridNode
+{
+  int x{0};
+  int y{0};
+
+  double g_cost{0.0};
+  double h_cost{0.0};
+
+  bool near_obstacle = false;
+
+  GridNode *prev{nullptr};
+
+  GridNode(int _x = 0, int _y = 0) : x(_x), y(_y) {}
+};
+
+
+struct MapMetaData {
+  double resolution{0.0};
+  double inv_resolution{0.0};
+  double origin_x{0.0};
+  double origin_y{0.0};
+  int size_x{0};
+  int size_y{0};
+
+  // Helper to update all fields atomically from a costmap pointer
+  void update(const SimpleMap &map) {
+    resolution = map.resolution();
+    inv_resolution = (resolution > 0.0) ? (1.0 / resolution) : 0.0;
+    origin_x = map.origin_x();
+    origin_y = map.origin_y();
+    size_x = static_cast<int>(map.width());
+    size_y = static_cast<int>(map.height());
+  }
+};
+
 /// \brief A planner implementing the A* algorithm on a SimpleMap grid.
 class TestSimplePlanner : public PlannerMethodBase
 {
@@ -61,6 +96,17 @@ public:
    */
   void update(NavState & nav_state) override;
 
+  struct CompareNode
+  {
+    bool operator()(
+      const GridNode* a,
+      const GridNode* b) const
+    {
+      // Keeps the evaluation simple and fast for priority sorting tree shifts
+      return (a->g_cost + a->h_cost) > (b->g_cost + b->h_cost);
+    }
+  };
+
 protected:
   double robot_radius_;        ///< Radius of the robot used for collision checking.
   double clearance_distance_;  ///< Minimum clearance distance from obstacles in meters.
@@ -69,6 +115,16 @@ protected:
 
   /// Publisher for the computed navigation path.
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
+
+  GridNode* get_node_from_pool(int x, int y, int index);
+
+  MapMetaData map_meta_;
+
+  std::vector<GridNode> node_pool_;
+  std::vector<bool> node_initialized_; 
+  std::vector<double> g_cost_cache_;
+  std::vector<bool> visited_;
+  double clearance_cells_ = 0.2;
 
   /**
    * @brief Runs the DRSP (Dynamic Recursive String Pulling) planning algorithm to compute a path.
@@ -79,11 +135,10 @@ protected:
    * @param resolution The cell resolution of the map (in meters).
    * @return A sequence of poses representing the planned path.
    */
-  std::vector<geometry_msgs::msg::Pose> test_planner_path(
+  std::vector<geometry_msgs::msg::Pose> plan_path(
     const SimpleMap & map,
     const geometry_msgs::msg::Pose & start,
-    const geometry_msgs::msg::Pose & goal,
-    double resolution);
+    const geometry_msgs::msg::Pose & goal);
 
   /**
    * @brief Checks whether a map cell is free, considering a clearance area.
@@ -102,12 +157,40 @@ protected:
     int cx, int cy,
     double clearance_cells);
 
-  
+  /* --------- NEW FUNCTIONS ------------- */
+  GridNode* runDRSPPlan(
+    GridNode* start_node,
+    GridNode* goal_node,
+    const SimpleMap & map);
+
+  GridNode poseToGrid(const geometry_msgs::msg::Pose &pose);
+
+  geometry_msgs::msg::Pose gridToPose(const GridNode &grid);
+
+  int gridToMapIndex(const GridNode &grid);
+
+  bool isGridOnMap(const GridNode &grid);
+
+  bool isMapCellFree(const GridNode &grid, const SimpleMap & map);
+
+  double euclidean_distance(const GridNode &a, const GridNode &b);
+
   bool lineOfSight(
     int x0, int y0, 
     int x1, int y1,
-    const SimpleMap & map,
+    const SimpleMap & map);
+
+  std::vector<geometry_msgs::msg::Pose> addStraightLinePoses(
+    const geometry_msgs::msg::Pose & start,
+    const geometry_msgs::msg::Pose & end,
     double resolution);
+
+  std::vector<geometry_msgs::msg::Pose> densifyPath(
+    const std::vector<geometry_msgs::msg::Pose> & poses, 
+    const geometry_msgs::msg::Pose & goal);
+
+  /* ------------------------------- */
+
 };
 
 }  // namespace easynav

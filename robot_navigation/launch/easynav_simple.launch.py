@@ -83,7 +83,7 @@ def generate_launch_description():
     # ld.add_action(declare_rviz_config_cmd)
 
     ld.add_action(easynav_system_simple)
-    # ld.add_action(twist_stamper)
+    ld.add_action(twist_stamper)
     # ld.add_action(rviz_cmd)
 
     return ld
