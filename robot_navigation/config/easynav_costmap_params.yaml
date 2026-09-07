@@ -79,7 +79,8 @@ maps_manager_node:
       freq: 10.0 
       plugin: easynav_costmap_maps_manager/CostmapMapsManager
       package: robot_navigation
-      map_path_file: maps/room_with_walls.yaml
+      # map_path_file: maps/room_with_walls.yaml
+      map_path_file: maps/bookstore.yaml
       filters: [obstacles, inflation]
       obstacles:
         plugin: easynav_costmap_maps_manager/CostmapMapsManager/ObstaclesFilter

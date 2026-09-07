@@ -72,7 +72,8 @@ maps_manager_node:
       freq: 10.0
       plugin: easynav_simple_maps_manager/SimpleMapsManager
       package: robot_navigation
-      map_path_file: maps/room_with_walls.map
+      # map_path_file: maps/room_with_walls.map
+      map_path_file: maps/bookstore.map
 
 planner_node:
   ros__parameters:
