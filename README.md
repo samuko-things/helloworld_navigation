@@ -38,7 +38,7 @@ source /opt/ros/jazzy/setup.bash
 source ~/easynav_ws/install/setup.bash
 ```
 ```shell
-source ~/robot_ws/install/setup.bash
+source ~/ros_ws/install/setup.bash
 ```
 
 ---
@@ -78,7 +78,7 @@ ros2 launch robot_navigation easynav_costmap.launch.py #use_route:=true
 ros2 service call /maps_manager_node/simple/savemap std_srvs/srv/Trigger
 ```
 ```shell
-mv /tmp/default.map ~/<ros_ws>/src/helloworld_navigation/robot_navigation/maps/<map_name>.map
+mv /tmp/default.map ~/ros_ws/src/helloworld_navigation/robot_navigation/maps/<map_name>.map
 ```
 
 - save costmap map in easynav with slamtoolbox
@@ -100,5 +100,5 @@ ros2 launch robot_navigation easynav_create_routes.launch.py
 ros2 service call /maps_manager_node/routes/save_routes std_srvs/srv/Trigger {}
 ```
 ```shell
-mv /tmp/routes.yaml ~/<ros_ws>/src/helloworld_navigation/robot_navigation/maps/<route_name>.yaml
+mv /tmp/routes.yaml ~/ros_ws/src/helloworld_navigation/robot_navigation/maps/<route_name>.yaml
 ```
