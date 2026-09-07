@@ -130,7 +130,7 @@ protected:
   std::vector<bool> node_initialized_; 
   std::vector<double> g_cost_cache_;
   std::vector<bool> visited_;
-  int los_shortcut_cost_limit_ = 50;
+  int los_shortcut_cost_limit_ = 3;
   double cost_travel_multiplier_ = 3.0;
 
   /**
