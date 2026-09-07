@@ -27,54 +27,37 @@ namespace test_planner_plugin
 
 struct GridNode
 {
-  int x;
-  int y;
-  double g_cost;
-  double h_cost;
-  std::shared_ptr<GridNode> prev;
+  int x{0};
+  int y{0};
 
-  GridNode(int x_in, int y_in) : x(x_in), y(y_in), g_cost(0), h_cost(0)
-  {}
+  double g_cost{0.0};
+  double h_cost{0.0};
+  double f_cost{0.0};
 
-  GridNode() : GridNode(0, 0)
-  {}
+  bool is_in_queue{false};
 
-  bool operator>(const GridNode &other) const 
-  {
-    return (this->g_cost + this->h_cost) > (other.g_cost + other.h_cost);
-  }
+  GridNode *prev{nullptr};
+  GridNode *parent{nullptr};
 
-  bool operator==(const GridNode &other) const 
-  {
-    return (this->x == other.x) && (this->y == other.y);
-  }
-
-  GridNode operator+(std::pair<int, int> const &other) const
-  {
-    GridNode result(this->x+other.first, this->y+other.second);
-    return result;
-  }
-
-  GridNode operator+(const GridNode &other) const
-  {
-    GridNode result(this->x+other.x, this->y+other.y);
-    return result;
-  }
+  GridNode(int _x = 0, int _y = 0) : x(_x), y(_y) {}
 };
 
-struct DataGreater {
-    bool operator()(const std::shared_ptr<GridNode>& a, const std::shared_ptr<GridNode>& b) const {
-        return *a > *b;
-    }
+struct Dir
+{ int dx; 
+  int dy; 
+  double dist; 
 };
 
-struct DirNode
+struct CompareNode
 {
-  std::pair<int, int> dir;
-  int t_cost;
-
-  DirNode(std::pair<int, int> dir_, int t_cost_) : dir(dir_), t_cost(t_cost_)
-  {}
+  bool operator()(
+    const GridNode* a,
+    const GridNode* b) const
+  {
+    // Keeps the evaluation simple and fast for priority sorting tree shifts
+    // return (a->g_cost + a->h_cost) > (b->g_cost + b->h_cost);
+    return (a->f_cost) > (b->f_cost);
+  }
 };
 
 
@@ -122,59 +105,57 @@ public:
 
 protected:
 
-  std::shared_ptr<GridNode> runTestPlan(
-    std::shared_ptr<GridNode> start_node,
-    std::shared_ptr<GridNode> goal_node,
-    const std::function<bool()>& cancel_checker,
-    const unsigned char* char_map,
-    unsigned int size_x);
-
-  std::shared_ptr<GridNode> runThetaStarPlan(
-    std::shared_ptr<GridNode> start_node,
-    std::shared_ptr<GridNode> goal_node,
-    const std::function<bool()>& cancel_checker,
-    const unsigned char* char_map,
-    unsigned int size_x);
-
-  std::shared_ptr<GridNode> runAStarPlan(
-    std::shared_ptr<GridNode> start_node,
-    std::shared_ptr<GridNode> goal_node,
+  GridNode* runLazyThetaStarPlan(
+    GridNode* start_node,
+    GridNode* goal_node,
     const std::function<bool()>& cancel_checker,
     const unsigned char* char_map,
     unsigned int size_x,
-    bool smooth=true);
+    size_t & los_checks,
+    size_t & node_expansions,
+    size_t & fallback_count,
+    size_t & successful_parent_collapses);
 
-  std::shared_ptr<GridNode> greedyStringPullSmooth(
-    std::shared_ptr<GridNode> grid_node_path,
+  GridNode* runLazyThetaStarPlanTest(
+    GridNode* start_node,
+    GridNode* goal_node,
     const std::function<bool()>& cancel_checker,
     const unsigned char* char_map,
-    unsigned int size_x);
-
-  
-  //---------LAZY THETA STAR---------------------
-
-  std::shared_ptr<GridNode> runLazyThetaStarPlan(
-    std::shared_ptr<GridNode> start_node,
-    std::shared_ptr<GridNode> goal_node,
-    const std::function<bool()>& cancel_checker,
-    const unsigned char* char_map,
-    unsigned int size_x);
+    unsigned int size_x,
+    size_t & los_checks,
+    size_t & node_expansions,
+    size_t & fallback_count,
+    size_t & successful_parent_collapses);
 
   //---------------------------------------------
 
+  GridNode poseToGrid(const geometry_msgs::msg::Pose &pose) const;
 
-  GridNode poseToGrid(const geometry_msgs::msg::Pose &pose);
-  geometry_msgs::msg::Pose gridToPose(const GridNode &grid);
-  int gridToMapIndex(const GridNode &grid);
-  double getGridCost(const GridNode &grid, const unsigned char* char_map);
-  bool isGridOnMap(const GridNode &grid);
-  bool isMapCellFree(const GridNode &grid, const unsigned char* char_map);
+  geometry_msgs::msg::Pose gridToPose(const GridNode &grid) const;
 
-  double euclidean_distance(const GridNode &a, const GridNode &b);
+  int gridToMapIndex(const GridNode &grid) const;
+
+  int gridToMapIndex(const int x, const int y) const;
+
+  bool isGridOnMap(const GridNode &grid) const;
+
+  bool isMapCellFree(const GridNode &grid, const unsigned char* char_map) const;
+
+  // bool isMapCellFree(const int x, const int y, unsigned char* char_map) const;
+
+  double getGridCost(const GridNode &grid, const unsigned char* char_map) const;
+
+  double euclidean_distance(const GridNode &a, const GridNode &b) const;
+
+  bool isCloseToObstacle(const GridNode &grid, const unsigned char* char_map) const;
+
+  std::vector<Dir> generateDirections(int grid_radius);
+  std::vector<Dir> generateDirectionRayCasts(int grid_radius);
+  std::vector<Dir> generateDirectionRing(int grid_radius);
 
   bool lineOfSight(
-    const GridNode &start, 
-    const GridNode &end,
+    GridNode *start,
+    GridNode *end,
     const unsigned char* char_map,
     unsigned int size_x,
     bool relax=false) const;
@@ -185,21 +166,57 @@ protected:
     const geometry_msgs::msg::PoseStamped & end,
     double resolution) const;
 
-  nav_msgs::msg::Path fillUpPath(
+  nav_msgs::msg::Path densifyPath(
     const nav_msgs::msg::Path & path, 
     const geometry_msgs::msg::PoseStamped & goal) const;
+
+  nav_msgs::msg::Path smoothPath(
+    const nav_msgs::msg::Path & path,
+    double w_data=0.2,
+    double w_smooth=0.4,
+    int max_iterations=1000,
+    double tolerance=1e-5) const;
+
+  nav_msgs::msg::Path fillUpPath(
+    const nav_msgs::msg::Path & path, 
+    const geometry_msgs::msg::PoseStamped & goal,
+    bool smooth=false) const;
+
+  GridNode* get_node_from_pool(int x, int y, int index);
+
+  void clearQueue();
 
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros_;
 
   CostmapMeta costmap_meta_;
-  std::vector<std::shared_ptr<GridNode>> node_lookup_;
-  std::vector<bool> visited_;
+  
+  std::vector<GridNode> node_pool_; 
+  std::vector<int> node_visited_id_;
+  int run_id_ = 0;
+
+  std::priority_queue<
+    GridNode*,
+    std::vector<GridNode*>,
+    CompareNode
+  > open_queue_;
 
   int los_shortcut_cost_limit_;
-
   double cost_travel_multiplier_;
 
-  std::string planner_name_{"test"};
+  int planner_id_ = 1;
+
+  Dir dirs_[8] = {
+    {-1,  0, 1.0},
+    { 1,  0, 1.0},
+    { 0, -1, 1.0},
+    { 0,  1, 1.0},
+    {-1, -1, 1.4142},
+    {-1,  1, 1.4142},
+    { 1, -1, 1.4142},
+    { 1,  1, 1.4142}
+  };
+
+  std::vector<Dir> obs_dir_;
 
   rclcpp::Logger logger_{rclcpp::get_logger("TestPlanner")};
 };

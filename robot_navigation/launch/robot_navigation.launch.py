@@ -51,6 +51,9 @@ def generate_launch_description():
         executable='test_planner',
         name='test_planner',
         output='screen',
+        parameters=[
+          {'planner_id': 1 }
+        ],
       )
 
   #--------------------------------------------------------------------------------

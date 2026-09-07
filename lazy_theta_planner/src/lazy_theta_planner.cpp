@@ -286,7 +286,8 @@ GridNode* LazyThetaPlanner::runLazyThetaStarPlan(
           active->g_cost = min_g;
           g_cost_cache_[active_idx] = min_g;
           active->prev = best_parent;
-        } else {
+        } 
+        else {
           visited_[active_idx] = true;
           continue; 
         }
@@ -676,6 +677,67 @@ double LazyThetaPlanner::euclidean_distance(const GridNode &a, const GridNode &b
 }
 
 
+// bool LazyThetaPlanner::lineOfSight(
+//   int x0, int y0, 
+//   int x1, int y1,
+//   const unsigned char* char_map,
+//   unsigned int size_x,
+//   bool relax) const
+// {
+
+//   int dx = std::abs(x1 - x0);
+//   int dy = std::abs(y1 - y0);
+//   int sx = (x0 < x1) ? 1 : -1;
+//   int sy = (y0 < y1) ? 1 : -1;
+//   int err = dx - dy;
+
+//   int stride_x = sx; 
+//   int stride_y = sy * static_cast<int>(size_x);
+
+//   int active_idx = y0 * size_x + x0;
+
+//   int max_x = static_cast<int>(costmap_meta_.size_x);
+//   int max_y = static_cast<int>(costmap_meta_.size_y);
+
+//   while (true)
+//   {
+//     // Safety Guard: Check map boundaries before reading char_map
+//     if (x0 < 0 || x0 >= max_x || y0 < 0 || y0 >= max_y) {
+//       return false;
+//     }
+
+//     if(relax){
+//       if (char_map[active_idx] > static_cast<unsigned char>(los_shortcut_cost_limit_+120)) {
+//         return false;
+//       }
+//     }
+//     else {
+//       if (char_map[active_idx] > static_cast<unsigned char>(los_shortcut_cost_limit_)) {
+//         return false;
+//       }
+//     }
+
+//     if (x0 == x1 && y0 == y1) {
+//       break;
+//     }
+
+//     int e2 = 2 * err;
+//     if (e2 > -dy) { 
+//       err -= dy; 
+//       x0 += sx; 
+//       active_idx += stride_x; 
+//     }
+//     if (e2 < dx)  { 
+//       err += dx; 
+//       y0 += sy; 
+//       active_idx += stride_y; 
+//     }
+//   }
+
+//   return true;
+// }
+
+
 bool LazyThetaPlanner::lineOfSight(
   int x0, int y0, 
   int x1, int y1,
@@ -683,37 +745,29 @@ bool LazyThetaPlanner::lineOfSight(
   unsigned int size_x,
   bool relax) const
 {
-
-  int dx = std::abs(x1 - x0);
-  int dy = std::abs(y1 - y0);
-  int sx = (x0 < x1) ? 1 : -1;
-  int sy = (y0 < y1) ? 1 : -1;
+  int dx = std::abs(x1 - x0), sx = (x0 < x1) ? 1 : -1;
+  int dy = std::abs(y1 - y0), sy = (y0 < y1) ? 1 : -1;
   int err = dx - dy;
-
-  int stride_x = sx; 
-  int stride_y = sy * static_cast<int>(size_x);
-
-  int active_idx = y0 * size_x + x0;
 
   int max_x = static_cast<int>(costmap_meta_.size_x);
   int max_y = static_cast<int>(costmap_meta_.size_y);
 
-  while (true)
-  {
-    // Safety Guard: Check map boundaries before reading char_map
-    if (x0 < 0 || x0 >= max_x || y0 < 0 || y0 >= max_y) {
+  // Compute cost threshold based on the relax flag
+  const auto threshold = static_cast<unsigned char>(
+    los_shortcut_cost_limit_ + (relax ? 120 : 0));
+
+  // Helper lambda to encapsulate boundary and cost checks
+  auto isSafe = [&](int x, int y) -> bool {
+    if (x < 0 || x >= max_x || y < 0 || y >= max_y) {
       return false;
     }
+    int idx = y * static_cast<int>(size_x) + x;
+    return char_map[idx] <= threshold;
+  };
 
-    if(relax){
-      if (char_map[active_idx] > static_cast<unsigned char>(los_shortcut_cost_limit_+120)) {
-        return false;
-      }
-    }
-    else {
-      if (char_map[active_idx] > static_cast<unsigned char>(los_shortcut_cost_limit_)) {
-        return false;
-      }
+  while (true) {
+    if (!isSafe(x0, y0)) {
+      return false;
     }
 
     if (x0 == x1 && y0 == y1) {
@@ -724,12 +778,10 @@ bool LazyThetaPlanner::lineOfSight(
     if (e2 > -dy) { 
       err -= dy; 
       x0 += sx; 
-      active_idx += stride_x; 
     }
-    if (e2 < dx)  { 
+    if (e2 < dx) { 
       err += dx; 
       y0 += sy; 
-      active_idx += stride_y; 
     }
   }
 

@@ -37,14 +37,21 @@ struct GridNode
 
   double g_cost{0.0};
   double h_cost{0.0};
+  double f_cost{0.0};
 
-  bool near_obstacle = false;
+  bool is_in_queue{false};
 
   GridNode *prev{nullptr};
+  GridNode *parent{nullptr};
 
   GridNode(int _x = 0, int _y = 0) : x(_x), y(_y) {}
 };
 
+struct Dir
+{ int dx; 
+  int dy; 
+  double dist; 
+};
 
 struct MapMetaData {
   double resolution{0.0};
@@ -79,7 +86,8 @@ public:
       const GridNode* b) const
     {
       // Keeps the evaluation simple and fast for priority sorting tree shifts
-      return (a->g_cost + a->h_cost) > (b->g_cost + b->h_cost);
+      // return (a->g_cost + a->h_cost) > (b->g_cost + b->h_cost);
+      return (a->f_cost) > (b->f_cost);
     }
   };
 
@@ -104,11 +112,25 @@ private:
     const geometry_msgs::msg::PoseStamped &start_pose,
     const geometry_msgs::msg::PoseStamped &goal_pose);
 
-  GridNode* runDRSPPlan(
+  GridNode* runLazyThetaStarPlan(
     GridNode* start_node,
     GridNode* goal_node,
     const int8_t* char_map,
-    unsigned int size_x);
+    unsigned int size_x,
+    size_t & los_checks,
+    size_t & node_expansions,
+    size_t & fallback_count,
+    size_t & successful_parent_collapses);
+
+  GridNode* runLazyThetaStarPlanTest(
+    GridNode* start_node,
+    GridNode* goal_node,
+    const int8_t* char_map,
+    unsigned int size_x,
+    size_t & los_checks,
+    size_t & node_expansions,
+    size_t & fallback_count,
+    size_t & successful_parent_collapses);
 
   GridNode poseToGrid(const geometry_msgs::msg::Pose &pose) const;
 
@@ -116,22 +138,45 @@ private:
 
   int gridToMapIndex(const GridNode &grid) const;
 
+  int gridToMapIndex(const int x, const int y) const;
+
   bool isGridOnMap(const GridNode &grid) const;
 
   bool isMapCellFree(const GridNode &grid, const int8_t* char_map) const;
 
+  bool isMapCellFree(const int x, const int y, const int8_t* char_map) const;
+
   double euclidean_distance(const GridNode &a, const GridNode &b) const;
 
-  bool isFreeWithClearance(
+  bool isCloseToObstacle(
     const int8_t* char_map,
     int cx, int cy,
-    double clearance = 0.3) const;
+    int sweep_dist_cells) const;
+
+  bool isNodeCloseToObstacle(
+    const int8_t* char_map,
+    GridNode &node) const;
+
+  bool isEdgeRisky(
+    const int8_t* char_map,
+    GridNode* current,
+    GridNode* parent) const;
+
+  bool shouldCheckLOS(
+    const int8_t* char_map,
+    GridNode *current,
+    GridNode *parent
+  ) const;
 
   bool lineOfSight(
     GridNode *start,
     GridNode *end,
     const int8_t* char_map,
     unsigned int size_x) const;
+
+  std::vector<Dir> generateDirections(int grid_radius);
+  std::vector<Dir> generateDirectionRayCasts(int grid_radius);
+  std::vector<Dir> generateSquareRing(int grid_radius);
 
   std::vector<geometry_msgs::msg::PoseStamped>
   addStraightLinePoses(
@@ -161,12 +206,27 @@ private:
 
   std::vector<GridNode> node_pool_;
   std::vector<bool> node_initialized_; 
+  std::vector<int> node_visited_id_;
+  int run_id_ = 0;
   std::vector<double> g_cost_cache_;
-  std::vector<bool> visited_;
 
   int los_shortcut_cost_limit_;
-
   double cost_travel_multiplier_;
+
+  int planner_id_ = 1;
+
+  Dir dirs[8] = {
+    {-1,  0, 1.0},
+    { 1,  0, 1.0},
+    { 0, -1, 1.0},
+    { 0,  1, 1.0},
+    {-1, -1, 1.4142},
+    {-1,  1, 1.4142},
+    { 1, -1, 1.4142},
+    { 1,  1, 1.4142}
+  };
+
+  std::vector<Dir> dirs_;
 
   rclcpp::Logger logger_{rclcpp::get_logger("TestPlanner")};
 };
