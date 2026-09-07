@@ -90,16 +90,27 @@ maps_manager_node:
         inscribed_radius: 0.25
         cost_scaling_factor: 3.0
 
+# planner_node:
+#   ros__parameters:
+#     use_sim_time: true
+#     planner_types: [costmap]
+#     costmap:
+#       freq: 0.5
+#       plugin: easynav_costmap_planner/CostmapPlanner
+#       cost_factor: 10.0
+#       continuous_replan: true
+
 planner_node:
   ros__parameters:
     use_sim_time: true
     planner_types: [costmap]
     costmap:
       freq: 0.5
-      # plugin: easynav_costmap_planner/CostmapPlanner
       plugin: easynav_test_costmap_planner/TestCostmapPlanner
-      cost_factor: 10.0
-      continuous_replan: true
+      los_shortcut_cost_limit_: 5 # Strict limit for line-of-sight shortcuts through the inflation layer (value ranges from 1-100)
+      cost_travel_multiplier_: 3.0 # Weight for penalizing traversal through inflation (try values between 1.0 to 3.0)
+      smooth_path_: true # whether to smooth the final path
+      continuous_replan_: true    # Wheter replan path at freq time
 
 sensors_node:
   ros__parameters:

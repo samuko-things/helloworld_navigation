@@ -102,14 +102,14 @@ void TestCostmapPlanner::on_initialize()
 {
   auto node = get_node();
   const auto & plugin_name = get_plugin_name();
-  node->declare_parameter<double>(plugin_name + ".cost_factor", 2.0);
-  node->declare_parameter<double>(plugin_name + ".inflation_penalty", 5.0);
-  node->declare_parameter<double>(plugin_name + ".heuristic_scale", 1.0);
+  node->declare_parameter<int>(plugin_name + ".los_shortcut_cost_limit", 5);
+  node->declare_parameter<double>(plugin_name + ".cost_travel_multiplier", 3.0);
+  node->declare_parameter<bool>(plugin_name + ".smooth_path", true);
   node->declare_parameter<bool>(plugin_name + ".continuous_replan", true);
 
-  node->get_parameter(plugin_name + ".cost_factor", cost_factor_);
-  node->get_parameter(plugin_name + ".inflation_penalty", inflation_penalty_);
-  node->get_parameter(plugin_name + ".heuristic_scale", heuristic_scale_);
+  node->get_parameter(plugin_name + ".los_shortcut_cost_limit", los_shortcut_cost_limit_);
+  node->get_parameter(plugin_name + ".cost_travel_multiplier", cost_travel_multiplier_);
+  node->get_parameter(plugin_name + ".smooth_path", smooth_path_);
   node->get_parameter(plugin_name + ".continuous_replan", continuous_replan_);
 
   path_pub_ = node->create_publisher<nav_msgs::msg::Path>(
@@ -221,7 +221,9 @@ void TestCostmapPlanner::update(NavState & nav_state)
   auto poses = plan_path(map, robot_pose.pose.pose, goal);
   if (!poses.empty()) {
     // Apply a light smoothing to the raw grid path
-    smooth_path(poses);
+    if (smooth_path_){
+      smooth_path(poses);
+    }
 
     current_path_.poses.clear();
     current_path_.header.stamp = get_node()->now();
@@ -260,16 +262,16 @@ std::vector<geometry_msgs::msg::Pose> TestCostmapPlanner::plan_path(
 
   // Start & Goal Node Setup
   GridNode raw_start(static_cast<int>(sx), static_cast<int>(sy));
-  int start_idx = gridToMapIndex(raw_start);
+  int start_idx = grid_to_map_index(raw_start);
   GridNode* start_node = get_node_from_pool(raw_start.x, raw_start.y, start_idx);
 
   GridNode raw_goal(static_cast<int>(gx), static_cast<int>(gy));
-  int goal_idx = gridToMapIndex(raw_goal);
+  int goal_idx = grid_to_map_index(raw_goal);
   GridNode* goal_node = get_node_from_pool(raw_goal.x, raw_goal.y, goal_idx);
 
   const unsigned char* char_map = map.getCharMap();
 
-  GridNode* best_goal = runDRSPPlan(
+  GridNode* best_goal = run_test_planner(
     start_node, 
     goal_node, 
     char_map, 
@@ -287,17 +289,17 @@ std::vector<geometry_msgs::msg::Pose> TestCostmapPlanner::plan_path(
   while (node)
   {
     geometry_msgs::msg::Pose pose;
-    pose = gridToPose(*node);
+    pose = grid_to_pose(*node);
     path.push_back(pose);
 
-    if (node->prev == node) {
+    if (node->parent == node) {
       break;
     }
-    node = node->prev;
+    node = node->parent;
   }
 
   std::reverse(path.begin(), path.end());
-  return densifyPath(path, goal);
+  return densify_path(path, goal);
 }
 
 
@@ -313,7 +315,7 @@ std::vector<geometry_msgs::msg::Pose> TestCostmapPlanner::plan_path(
 
 /* --------------------- NEW FUNCTIONS ------------------------------ */
 
-GridNode* TestCostmapPlanner::runDRSPPlan(
+GridNode* TestCostmapPlanner::run_test_planner(
   GridNode* start_node,
   GridNode* goal_node,
   const unsigned char* char_map,
@@ -322,14 +324,14 @@ GridNode* TestCostmapPlanner::runDRSPPlan(
   std::priority_queue<
     GridNode*,
     std::vector<GridNode*>,
-    TestCostmapPlanner::CompareNode
+    CompareGridNode
   > open;
 
-  int start_idx = gridToMapIndex(*start_node);
+  int start_idx = grid_to_map_index(*start_node);
 
   start_node->g_cost = 0.0;
   start_node->h_cost = euclidean_distance(*start_node, *goal_node);
-  start_node->prev = start_node;
+  start_node->parent = start_node;
 
   open.push(start_node);
   g_cost_cache_[start_idx] = 0.0;
@@ -347,25 +349,25 @@ GridNode* TestCostmapPlanner::runDRSPPlan(
 
   while (!open.empty())
   {
-    GridNode* active = open.top();
+    GridNode* current = open.top();
     open.pop();
 
-    int active_idx = gridToMapIndex(*active);
+    int active_idx = grid_to_map_index(*current);
 
     if (visited_[active_idx]) {
       continue;
     }
 
-    if (active->g_cost > g_cost_cache_[active_idx]) {
+    if (current->g_cost > g_cost_cache_[active_idx]) {
       continue;
     }
 
-    if (active->prev && active->prev->prev)
+    if (current->parent && current->parent->parent)
     {
-      auto actual_grandparent = active->prev->prev;
-      if (lineOfSight(active->x, active->y, actual_grandparent->x, actual_grandparent->y, char_map, size_x))
+      auto actual_grandparent = current->parent->parent;
+      if (line_of_sight(current->x, current->y, actual_grandparent->x, actual_grandparent->y, char_map, size_x))
       {
-        active->prev = actual_grandparent;
+        current->parent = actual_grandparent;
       }
       else
       {
@@ -374,16 +376,16 @@ GridNode* TestCostmapPlanner::runDRSPPlan(
 
         for (const auto & d : dirs)
         {
-          int nx = active->x + d.dx;
-          int ny = active->y + d.dy;
+          int nx = current->x + d.dx;
+          int ny = current->y + d.dy;
           GridNode nbr_pos(nx, ny);
-          int nbr_idx = gridToMapIndex(nbr_pos);
+          int nbr_idx = grid_to_map_index(nbr_pos);
 
-          if (isGridOnMap(nbr_pos) && isMapCellFree(nbr_pos, char_map) && visited_[nbr_idx])
+          if (is_grid_on_map(nbr_pos) && is_map_cell_free(nbr_pos, char_map) && visited_[nbr_idx])
           {
             GridNode* nbr_node = &node_pool_[nbr_idx];
             double g_val = g_cost_cache_[nbr_idx];
-            double cost_to_active = g_val + (d.dist * getGridCost(*active, char_map));
+            double cost_to_active = g_val + (d.dist * get_grid_cost(*current, char_map));
             if (cost_to_active < min_g) {
               min_g = cost_to_active;
               best_fallback_parent = nbr_node;
@@ -392,32 +394,32 @@ GridNode* TestCostmapPlanner::runDRSPPlan(
         }
 
         if (best_fallback_parent) {
-          active->g_cost = min_g;
+          current->g_cost = min_g;
           g_cost_cache_[active_idx] = min_g;
-          active->prev = best_fallback_parent;
+          current->parent = best_fallback_parent;
         }
       }
     }
 
-    if (active->x == goal_node->x && active->y == goal_node->y) {
-      return active;
+    if (current->x == goal_node->x && current->y == goal_node->y) {
+      return current;
     }
 
     visited_[active_idx] = true;
 
     for (const auto & d : dirs)
     {
-      int nx = active->x + d.dx;
-      int ny = active->y + d.dy;
+      int nx = current->x + d.dx;
+      int ny = current->y + d.dy;
 
       GridNode nbr_pos(nx, ny);
-      int nbr_idx = gridToMapIndex(nbr_pos);
+      int nbr_idx = grid_to_map_index(nbr_pos);
 
-      if (isGridOnMap(nbr_pos) && isMapCellFree(nbr_pos, char_map) && !visited_[nbr_idx]) {
-        GridNode* assumed_grandparent = active->prev ? active->prev : active;
+      if (is_grid_on_map(nbr_pos) && is_map_cell_free(nbr_pos, char_map) && !visited_[nbr_idx]) {
+        GridNode* assumed_grandparent = current->parent ? current->parent : current;
         GridNode* neighbor_node = get_node_from_pool(nx, ny, nbr_idx);
 
-        double new_g_cost = assumed_grandparent->g_cost + (euclidean_distance(nbr_pos, *(assumed_grandparent)) * getGridCost(nbr_pos, char_map));
+        double new_g_cost = assumed_grandparent->g_cost + (euclidean_distance(nbr_pos, *(assumed_grandparent)) * get_grid_cost(nbr_pos, char_map));
         double nbr_g_cost = g_cost_cache_[nbr_idx];
 
         if (nbr_g_cost < 0.0 || new_g_cost < nbr_g_cost)
@@ -426,7 +428,7 @@ GridNode* TestCostmapPlanner::runDRSPPlan(
 
           neighbor_node->g_cost = new_g_cost;
           neighbor_node->h_cost = euclidean_distance(*neighbor_node, *goal_node);
-          neighbor_node->prev = active;
+          neighbor_node->parent = current;
 
           open.push(neighbor_node);
         }
@@ -438,7 +440,7 @@ GridNode* TestCostmapPlanner::runDRSPPlan(
 }
 
 
-GridNode TestCostmapPlanner::poseToGrid(const geometry_msgs::msg::Pose &pose)
+GridNode TestCostmapPlanner::pose_to_grid(const geometry_msgs::msg::Pose &pose)
 {
   int gx = static_cast<int>((pose.position.x - costmap_meta_.origin_x) * costmap_meta_.inv_resolution);
   int gy = static_cast<int>((pose.position.y - costmap_meta_.origin_y) * costmap_meta_.inv_resolution);
@@ -446,7 +448,7 @@ GridNode TestCostmapPlanner::poseToGrid(const geometry_msgs::msg::Pose &pose)
   return GridNode(gx, gy);
 }
 
-geometry_msgs::msg::Pose TestCostmapPlanner::gridToPose(const GridNode &grid)
+geometry_msgs::msg::Pose TestCostmapPlanner::grid_to_pose(const GridNode &grid)
 {
   geometry_msgs::msg::Pose pose;
   pose.position.x = grid.x * costmap_meta_.resolution + costmap_meta_.origin_x;
@@ -456,25 +458,25 @@ geometry_msgs::msg::Pose TestCostmapPlanner::gridToPose(const GridNode &grid)
   return pose;
 }
 
-int TestCostmapPlanner::gridToMapIndex(const GridNode &grid_node)
+int TestCostmapPlanner::grid_to_map_index(const GridNode &grid_node)
 {
   return static_cast<int>(grid_node.y * costmap_meta_.size_x + grid_node.x);
 }
 
-bool TestCostmapPlanner::isGridOnMap(const GridNode &grid)
+bool TestCostmapPlanner::is_grid_on_map(const GridNode &grid)
 {
   return (grid.x >= 0 && grid.x < costmap_meta_.size_x &&
           grid.y >= 0 && grid.y < costmap_meta_.size_y);
 }
 
-double TestCostmapPlanner::getGridCost(const GridNode &grid, const unsigned char* char_map)
+double TestCostmapPlanner::get_grid_cost(const GridNode &grid, const unsigned char* char_map)
 {
-  return  1.0+(cost_travel_multiplier_ * std::clamp(static_cast<double>(char_map[gridToMapIndex(grid)]) / 252.0, 0.0, 1.0));
+  return  1.0+(cost_travel_multiplier_ * std::clamp(static_cast<double>(char_map[grid_to_map_index(grid)]) / 252.0, 0.0, 1.0));
 }
 
-bool TestCostmapPlanner::isMapCellFree(const GridNode &grid, const unsigned char* char_map)
+bool TestCostmapPlanner::is_map_cell_free(const GridNode &grid, const unsigned char* char_map)
 {
-  return /*(char_map[gridToMapIndex(grid)] >= 0) &&*/ (char_map[gridToMapIndex(grid)] < static_cast<unsigned char>(los_shortcut_cost_limit_+120));
+  return /*(char_map[grid_to_map_index(grid)] >= 0) &&*/ (char_map[grid_to_map_index(grid)] < static_cast<unsigned char>(los_shortcut_cost_limit_+120));
 }
 
 double TestCostmapPlanner::euclidean_distance(const GridNode &a, const GridNode &b){
@@ -484,7 +486,7 @@ double TestCostmapPlanner::euclidean_distance(const GridNode &a, const GridNode 
 }
 
 
-bool TestCostmapPlanner::lineOfSight(
+bool TestCostmapPlanner::line_of_sight(
   int x0, int y0, 
   int x1, int y1,
   const unsigned char* char_map,
@@ -540,7 +542,7 @@ GridNode* TestCostmapPlanner::get_node_from_pool(int x, int y, int index) {
     node->y = y;
     node->g_cost = std::numeric_limits<double>::max();
     node->h_cost = 0.0;
-    node->prev = nullptr;
+    node->parent = nullptr;
     node_initialized_[index] = true;
   }
   return node;
@@ -548,7 +550,7 @@ GridNode* TestCostmapPlanner::get_node_from_pool(int x, int y, int index) {
 
 
 std::vector<geometry_msgs::msg::Pose>
-TestCostmapPlanner::addStraightLinePoses(
+TestCostmapPlanner::add_straight_line_poses(
   const geometry_msgs::msg::Pose & start,
   const geometry_msgs::msg::Pose & end,
   double resolution)
@@ -579,7 +581,7 @@ TestCostmapPlanner::addStraightLinePoses(
 
 
 std::vector<geometry_msgs::msg::Pose>
-TestCostmapPlanner::densifyPath(
+TestCostmapPlanner::densify_path(
   const std::vector<geometry_msgs::msg::Pose> & poses, 
   const geometry_msgs::msg::Pose & goal)
 {
@@ -593,7 +595,7 @@ TestCostmapPlanner::densifyPath(
 
   for (size_t i = 1; i < poses.size(); ++i)
   {
-    auto seg = addStraightLinePoses(
+    auto seg = add_straight_line_poses(
       poses[i - 1],
       poses[i],
       costmap_meta_.resolution);
