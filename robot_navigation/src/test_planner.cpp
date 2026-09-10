@@ -7,6 +7,9 @@
 namespace test_planner
 {
 
+
+
+
 double round_to_3dp(double val) {
     return std::round(val * 1000.0) / 1000.0;
 }
@@ -16,6 +19,9 @@ TestPlanner::TestPlanner() : Node("test_planner")
 {
   declare_parameter<int>("planner_id", planner_id_);
   planner_id_ = get_parameter("planner_id").as_int();
+
+  declare_parameter<double>("dist_to_obstacle_check", dist_to_obstacle_check_);
+  dist_to_obstacle_check_ = get_parameter("dist_to_obstacle_check").as_double();
 
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
   tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
@@ -52,8 +58,20 @@ TestPlanner::TestPlanner() : Node("test_planner")
   node_pool_.resize(10);
   node_visited_id_.resize(10, 0);
 
+  node2_pool_.resize(10);
+  node2_initialized_.resize(10);
+  g_cost_cache_.resize(10);
+  visited_.resize(10);
+
   RCLCPP_INFO_STREAM(logger_, "TestPlanner Node Has Started Successfully");
 }
+
+
+
+
+
+
+
 
 void TestPlanner::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr map_msg){
   map_ = map_msg;
@@ -63,7 +81,21 @@ void TestPlanner::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr map_
   visited_map_.info = map_->info;
   visited_map_.data = std::vector<int8_t>(map_meta_data_.size_x*map_meta_data_.size_y, -1);
 
+  const int8_t* char_map = map_->data.data();
+  preprocessObstacleProximity(char_map, dist_to_obstacle_check_);
+
+  RCLCPP_INFO_STREAM(logger_, "Map Loaded Successfully");
+
 }
+
+
+
+
+
+
+
+
+
 
 void TestPlanner::goalCallback(const geometry_msgs::msg::PoseStamped::SharedPtr goal){
   
@@ -109,6 +141,16 @@ void TestPlanner::goalCallback(const geometry_msgs::msg::PoseStamped::SharedPtr 
 
 }
 
+
+
+
+
+
+
+
+
+
+
 nav_msgs::msg::Path TestPlanner::plan(
   const geometry_msgs::msg::PoseStamped &start,
   const geometry_msgs::msg::PoseStamped &goal)
@@ -121,47 +163,58 @@ nav_msgs::msg::Path TestPlanner::plan(
   map_meta_data_.update(map_);
   size_t current_map_size = map_meta_data_.size_x * map_meta_data_.size_y;
 
-  visited_map_.data = std::vector<int8_t>(current_map_size, -1);
+  visited_map_.data = std::vector<int8_t>(current_map_size, 0);
 
   // Fallback memory check
   if (node_pool_.size() != current_map_size) {
     node_pool_.resize(current_map_size);
     node_visited_id_.resize(current_map_size);
+
+    node2_pool_.resize(current_map_size);
+    node2_initialized_.resize(current_map_size);
+    g_cost_cache_.resize(current_map_size);
+    visited_.resize(current_map_size);
   }
 
   // --- FAST FLAT MEMORY RESETS ---
   std::fill(node_visited_id_.begin(),node_visited_id_.end(), 0);
 
+  std::fill(node2_initialized_.begin(), node2_initialized_.end(), false);
+  std::fill(visited_.begin(), visited_.end(), false);
+  std::fill(g_cost_cache_.begin(), g_cost_cache_.end(), -1.0);
+
   const int8_t* char_map = map_->data.data();
 
   run_id_++;
-  dirs_ = generateSquareRing(5);
 
   // Start & Goal Node Setup
   GridNode raw_start = poseToGrid(start.pose);
-  int start_idx = gridToMapIndex(raw_start);
-  GridNode* start_node = get_node_from_pool(raw_start.x, raw_start.y, start_idx);
+  GridNode* start_node = get_node_from_pool(raw_start.x, raw_start.y);
 
   GridNode raw_goal = poseToGrid(goal.pose);
-  int goal_idx = gridToMapIndex(raw_goal);
-  GridNode* goal_node = get_node_from_pool(raw_goal.x, raw_goal.y, goal_idx);
+  GridNode* goal_node = get_node_from_pool(raw_goal.x, raw_goal.y);
 
   auto start_time = std::chrono::high_resolution_clock::now();
 
   size_t los_checks;
+  size_t los_checks_attempted;
+  double los_check_time;
   size_t node_expansions;
   size_t fallback_count;
   size_t successful_parent_collapses;
 
+
   GridNode* best_goal;
 
   if (planner_id_ == 0) {
-    best_goal = runLazyThetaStarPlan(
+    best_goal = runLazyTheta(
       start_node, 
       goal_node, 
       char_map, 
       map_meta_data_.size_x,
+      los_check_time,
       los_checks,
+      los_checks_attempted,
       node_expansions,
       fallback_count,
       successful_parent_collapses
@@ -169,15 +222,18 @@ nav_msgs::msg::Path TestPlanner::plan(
 
     RCLCPP_INFO_STREAM(
     logger_,
-    "\n================ LAZY BENCHMARK METRICS ================");
+    "\n================ LAZY THETA BENCHMARK ================");
   }
+
   else {
-    best_goal = runLazyThetaStarPlanTest(
+    best_goal = runLazyThetaSkipLOS(
       start_node, 
       goal_node, 
       char_map, 
       map_meta_data_.size_x,
+      los_check_time,
       los_checks,
+      los_checks_attempted,
       node_expansions,
       fallback_count,
       successful_parent_collapses
@@ -185,9 +241,8 @@ nav_msgs::msg::Path TestPlanner::plan(
 
     RCLCPP_INFO_STREAM(
     logger_,
-    "\n================ LAZY FAST BENCHMARK METRICS ================");
+    "\n================ LAZY THETA WITH LOS SKIP BENCHMARK ================");
   }
-
 
   auto end_time = std::chrono::high_resolution_clock::now();
   double execution_time_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
@@ -200,9 +255,9 @@ nav_msgs::msg::Path TestPlanner::plan(
     GridNode* curr = best_goal;
     waypoints_count = 1; // Count goal node
 
-    while (curr->prev && curr->prev != curr)
+    while (curr->parent && curr->parent != curr)
     {
-      GridNode* parent = curr->prev;
+      GridNode* parent = curr->parent;
 
       // Euclidean distance between consecutive waypoints in the parent chain
       double dx = static_cast<double>(curr->x - parent->x);
@@ -219,7 +274,9 @@ nav_msgs::msg::Path TestPlanner::plan(
   "\n  Execution Time               : " << execution_time_ms << " ms" <<
   "\n  Path Length (Grid Units)     : " << path_length <<
   "\n  Waypoints Count              : " << waypoints_count <<
-  "\n  Line-of-Sight (LOS) Checks   : " << los_checks <<
+  "\n  Line-of-Sight Attempted      : " << los_checks_attempted <<
+  "\n  Line-of-Sight Checks         : " << los_checks <<
+  "\n  Line-of-Sight Checks Time    : " << los_check_time << "ms" <<
   "\n  Node Expansions              : " << node_expansions <<
   "\n  Fallback Trigger Count       : " << fallback_count <<
   "\n  Successful Parent Collapses  : " << successful_parent_collapses <<
@@ -242,10 +299,10 @@ nav_msgs::msg::Path TestPlanner::plan(
     ps.pose = gridToPose(*node);
     path.poses.push_back(ps);
 
-    if (node->prev == node) {
+    if (node->parent == node) {
       break;
     }
-    node = node->prev;
+    node = node->parent;
   }
 
   std::reverse(path.poses.begin(), path.poses.end());
@@ -261,222 +318,72 @@ nav_msgs::msg::Path TestPlanner::plan(
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-GridNode* TestPlanner::runLazyThetaStarPlan(
+GridNode* TestPlanner::runLazyTheta(
   GridNode* start_node,
   GridNode* goal_node,
   const int8_t* char_map,
   unsigned int size_x,
+  double & los_check_time,
   size_t & los_checks,
+  size_t & los_checks_attempted,
   size_t & node_expansions,
   size_t & fallback_count,
   size_t & successful_parent_collapses)
 {
   // Reset counters for this run
+  los_check_time = 0.0;
   los_checks = 0;
+  los_checks_attempted = 0;
   node_expansions = 0;
   fallback_count = 0;
   successful_parent_collapses = 0; // Always 0 for Lazy Theta* (Grandparent collapsing is DRSP-specific)
 
-  std::priority_queue<
-    GridNode*,
-    std::vector<GridNode*>,
-    TestPlanner::CompareNode
-  > nodes_to_explore;
-
-  // int start_idx = gridToMapIndex(*start_node);
-
   start_node->g_cost = 0.0;
   start_node->h_cost = euclidean_distance(*start_node, *goal_node);
-  start_node->f_cost = start_node->g_cost + start_node->h_cost;
   start_node->is_in_queue = true;
+  start_node->grid_parent = start_node;
+  start_node->parent = start_node;
 
-  start_node->prev = start_node;
+  open_queue_.push(start_node);
 
-  nodes_to_explore.push(start_node);
-  // g_cost_cache_[start_idx] = 0.0;
-
-  while (!nodes_to_explore.empty())
+  while (!open_queue_.empty())
   {
-    GridNode* current = nodes_to_explore.top();
-    nodes_to_explore.pop();
-
-    // int active_idx = gridToMapIndex(*current);
-
-    if (current->x == goal_node->x && current->y == goal_node->y) {
-      return current;
-    }
+    GridNode* current = open_queue_.top();
+    open_queue_.pop();
 
     current->is_in_queue = false;
 
     // Lazy Theta*: SetVertex Step (Verify line-of-sight to parent upon pop)
-    if (current->prev && current->prev->prev)
+    if (current->parent && current->parent != current)
     {
-      GridNode *maybe_parent = current->prev->prev;
-      los_checks++; // LOS metric counter
-      if (lineOfSight(current, current->prev->prev, char_map, size_x))
+      auto start_time = std::chrono::high_resolution_clock::now();
+      ++los_checks_attempted;
+      // visited_map_.data.at(gridToMapIndex(*current)) = 10;
+      // map_pub_->publish(visited_map_);
+      ++los_checks; // LOS metric counter
+      if (lineOfSight(current, current->parent, char_map, size_x))
       {
-        double g_cost = maybe_parent->g_cost + euclidean_distance(*current, *maybe_parent);
-        if (g_cost < current->g_cost)
+        // visited_map_.data.at(gridToMapIndex(*current)) = 10;
+        // map_pub_->publish(visited_map_);
+        double current_g_cost = current->parent->g_cost + euclidean_distance(*current, *current->parent);
+        if (current_g_cost < current->g_cost)
         {
-          current->prev = maybe_parent;
-          current->g_cost = g_cost;
-          current->f_cost = g_cost + current->h_cost;
+          current->g_cost = current_g_cost;
           successful_parent_collapses++;
         }
       }
-    }
-
-    node_expansions++; // Node Expansion metric counter
-
-    // UpdateVertex Expansion Phase
-    for (const auto & d : dirs)
-    {
-      int nx = current->x + d.dx;
-      int ny = current->y + d.dy;
-
-      GridNode nbr_pos(nx, ny);
-      int nbr_idx = gridToMapIndex(nbr_pos);
-
-      if (isGridOnMap(nbr_pos) && isMapCellFree(nbr_pos, char_map)) {
-        GridNode* nbr_node = get_node_from_pool(nx, ny, nbr_idx);
-
-        double g_cost = current->g_cost + d.dist;
-        double h_cost = euclidean_distance(*nbr_node, *goal_node);
-        double f_cost = g_cost + h_cost;
-
-        if (nbr_node->f_cost > f_cost)
-        {
-          nbr_node->g_cost = g_cost;
-          nbr_node->h_cost = h_cost;
-          nbr_node->f_cost = f_cost;
-          nbr_node->prev = current;
-
-          if(!nbr_node->is_in_queue)
-          {
-            nbr_node->is_in_queue = true;
-            nodes_to_explore.push(nbr_node);
-          }
-        }
-
-        // visited_map_.data.at(gridToMapIndex(*current)) = 10;
-        // map_pub_->publish(visited_map_);
-      }
-    }
-
-  }
-
-  return nullptr;
-}
-
-
-
-
-
-
-
-
-GridNode* TestPlanner::runLazyThetaStarPlanTest(
-  GridNode* start_node,
-  GridNode* goal_node,
-  const int8_t* char_map,
-  unsigned int size_x,
-  size_t & los_checks,
-  size_t & node_expansions,
-  size_t & fallback_count,
-  size_t & successful_parent_collapses)
-{
-  // Reset counters for this run
-  los_checks = 0;
-  node_expansions = 0;
-  fallback_count = 0;
-  successful_parent_collapses = 0; // Always 0 for Lazy Theta* (Grandparent collapsing is DRSP-specific)
-
-  std::priority_queue<
-    GridNode*,
-    std::vector<GridNode*>,
-    TestPlanner::CompareNode
-  > nodes_to_explore;
-
-  // int start_idx = gridToMapIndex(*start_node);
-
-  start_node->g_cost = 0.0;
-  start_node->h_cost = euclidean_distance(*start_node, *goal_node);
-  start_node->f_cost = start_node->g_cost + start_node->h_cost;
-  start_node->is_in_queue = true;
-
-  start_node->prev = start_node;
-  start_node->parent = start_node;
-
-  nodes_to_explore.push(start_node);
-  // g_cost_cache_[start_idx] = 0.0;
-
-  while (!nodes_to_explore.empty())
-  {
-    GridNode* current = nodes_to_explore.top();
-    nodes_to_explore.pop();
-
-    current->is_in_queue = false;
-
-    // Lazy Theta*: SetVertex Step (Verify line-of-sight to parent upon pop)
-    if (current->parent != current && current->prev && current->prev->prev)
-    {
-      // if(isNodeCloseToObstacle(char_map, *current))
-      if(isCloseToObstacle(char_map, current->x, current->y, 10))
+      else 
       {
-        // visited_map_.data.at(gridToMapIndex(*current)) = 10;
-        // map_pub_->publish(visited_map_);
-
-        GridNode *maybe_parent = current->prev->prev;
-        los_checks++; // LOS metric counter
-        if (lineOfSight(current, maybe_parent, char_map, size_x))
-        {
-          double current_g_cost = maybe_parent->g_cost + euclidean_distance(*current, *maybe_parent);
-          if (current_g_cost < current->g_cost)
-          {
-            current->prev = maybe_parent;
-            // current->parent = maybe_parent;
-            current->g_cost = current_g_cost;
-            current->f_cost = current_g_cost + current->h_cost;
-            successful_parent_collapses++;
-          }
-        }
-        else
-        {
-          fallback_count++;
-          los_checks++;
-          if (lineOfSight(current->parent, maybe_parent, char_map, size_x))
-          {
-            double parent_g_cost = maybe_parent->g_cost + euclidean_distance(*(current->parent), *maybe_parent);
-            if (parent_g_cost < current->parent->g_cost)
-            {
-              current->parent->g_cost = parent_g_cost;
-              current->parent->f_cost = parent_g_cost + current->parent->h_cost;
-            }
-          }
-
-          double current_g_cost = current->parent->g_cost + euclidean_distance(*current, *(current->parent));
-          current->g_cost = current_g_cost;
-          current->f_cost = current_g_cost + current->h_cost;
-
-          current->prev = current->parent;
-        }
+        ++fallback_count;
+        current->parent = current->grid_parent;
+        current->g_cost = current->grid_parent->g_cost + euclidean_distance(*current, *current->grid_parent);
       }
+      auto end_time = std::chrono::high_resolution_clock::now();
+      los_check_time += std::chrono::duration<double, std::milli>(end_time - start_time).count();
     }
 
     if (current->x == goal_node->x && current->y == goal_node->y) {
+      clearQueue();
       return current;
     }
     
@@ -488,31 +395,140 @@ GridNode* TestPlanner::runLazyThetaStarPlanTest(
       int nx = current->x + d.dx;
       int ny = current->y + d.dy;
 
-      GridNode nbr_pos(nx, ny);
-      int nbr_idx = gridToMapIndex(nbr_pos);
+      GridNode* nbr_node = get_node_from_pool(nx, ny);
 
-      if (isGridOnMap(nbr_pos) && isMapCellFree(nbr_pos, char_map)) {
-        GridNode* nbr_node = get_node_from_pool(nx, ny, nbr_idx);
-
+      if (isGridOnMap(*nbr_node) && isMapCellFree(*nbr_node, char_map)) {
         double g_cost = current->g_cost + d.dist;
         double h_cost = euclidean_distance(*nbr_node, *goal_node);
         double f_cost = g_cost + h_cost;
 
-        if (nbr_node->f_cost > f_cost)
+        if ((nbr_node->g_cost + nbr_node->h_cost) > f_cost)
         {
           nbr_node->g_cost = g_cost;
           nbr_node->h_cost = h_cost;
-          nbr_node->f_cost = f_cost;
-          nbr_node->parent = current;
-          nbr_node->prev = current->prev;
+          nbr_node->parent = current->parent;
+          nbr_node->grid_parent = current;
 
-          if(!nbr_node->is_in_queue)
-          {
+          if(!nbr_node->is_in_queue){
             nbr_node->is_in_queue = true;
-            nodes_to_explore.push(nbr_node);
+            open_queue_.push(nbr_node);
           }
         }
+        // visited_map_.data.at(gridToMapIndex(*current)) = 10;
+        // map_pub_->publish(visited_map_);
+      }
+    }
 
+  }
+
+  return nullptr;
+}
+
+
+
+
+
+
+
+GridNode* TestPlanner::runLazyThetaSkipLOS(
+  GridNode* start_node,
+  GridNode* goal_node,
+  const int8_t* char_map,
+  unsigned int size_x,
+  double & los_check_time,
+  size_t & los_checks,
+  size_t & los_checks_attempted,
+  size_t & node_expansions,
+  size_t & fallback_count,
+  size_t & successful_parent_collapses)
+{
+  // Reset counters for this run
+  los_check_time = 0.0;
+  los_checks = 0;
+  los_checks_attempted = 0;
+  node_expansions = 0;
+  fallback_count = 0;
+  successful_parent_collapses = 0; // Always 0 for Lazy Theta* (Grandparent collapsing is DRSP-specific)
+
+  start_node->g_cost = 0.0;
+  start_node->h_cost = euclidean_distance(*start_node, *goal_node);
+  start_node->is_in_queue = true;
+  start_node->grid_parent = start_node;
+  start_node->parent = start_node;
+
+  open_queue_.push(start_node);
+
+  while (!open_queue_.empty())
+  {
+    GridNode* current = open_queue_.top();
+    open_queue_.pop();
+
+    current->is_in_queue = false;
+
+    // Lazy Theta*: SetVertex Step (Verify line-of-sight to parent upon pop)
+    if (current->parent && current->parent != current)
+    {
+      auto start_time = std::chrono::high_resolution_clock::now();
+      ++los_checks_attempted;
+      if(isNodeCloseToObstacle(*current) || isNodeDirectionChanged2(current))
+      {
+        // visited_map_.data.at(gridToMapIndex(*current)) = 10;
+        // map_pub_->publish(visited_map_);
+        ++los_checks; // LOS metric counter
+        if (lineOfSight(current, current->parent, char_map, size_x))
+        {
+          // visited_map_.data.at(gridToMapIndex(*current)) = 10;
+          // map_pub_->publish(visited_map_);
+          double current_g_cost = current->parent->g_cost + euclidean_distance(*current, *current->parent);
+          if (current_g_cost < current->g_cost)
+          {
+            current->g_cost = current_g_cost;
+            successful_parent_collapses++;
+          }
+        }
+        else 
+        {
+          ++fallback_count;
+          current->parent = current->grid_parent;
+          current->g_cost = current->grid_parent->g_cost + euclidean_distance(*current, *current->grid_parent);
+        }
+      }
+      auto end_time = std::chrono::high_resolution_clock::now();
+      los_check_time += std::chrono::duration<double, std::milli>(end_time - start_time).count();
+    }
+
+    if (current->x == goal_node->x && current->y == goal_node->y) {
+      clearQueue();
+      return current;
+    }
+    
+    node_expansions++; // Node Expansion metric counter
+
+    // UpdateVertex Expansion Phase
+    for (const auto & d : dirs)
+    {
+      int nx = current->x + d.dx;
+      int ny = current->y + d.dy;
+
+      GridNode* nbr_node = get_node_from_pool(nx, ny);
+
+      if (isGridOnMap(*nbr_node) && isMapCellFree(*nbr_node, char_map)) {
+        double g_cost = current->g_cost + d.dist;
+        double h_cost = euclidean_distance(*nbr_node, *goal_node);
+        double f_cost = g_cost + h_cost;
+
+        if ((nbr_node->g_cost + nbr_node->h_cost) > f_cost)
+        {
+          nbr_node->g_cost = g_cost;
+          nbr_node->h_cost = h_cost;
+          nbr_node->parent = current->parent;
+          nbr_node->grid_parent = current;
+
+          if(!nbr_node->is_in_queue){
+            nbr_node->is_in_queue = true;
+            open_queue_.push(nbr_node);
+          }
+        }
         // visited_map_.data.at(gridToMapIndex(*current)) = 10;
         // map_pub_->publish(visited_map_);
       }
@@ -530,123 +546,70 @@ GridNode* TestPlanner::runLazyThetaStarPlanTest(
 
 
 
+GridNode* TestPlanner::get_node_from_pool2(int x, int y) {
+  int index = gridToMapIndex(x, y);
+  GridNode* node = &node2_pool_[index];
+  if (!node2_initialized_[index]) 
+  {
+    node->x = x;
+    node->y = y;
+    node->g_cost = std::numeric_limits<double>::infinity();
+    node->h_cost = 0.0;
+    node->parent = nullptr;
+    node->grid_parent = nullptr;
+    node->is_in_queue = false;
+
+    node2_initialized_[index] = true;
+  }
+  return node;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 bool TestPlanner::isCloseToObstacle(
     const int8_t* char_map,
-    int cx, int cy,
-    int sweep_dist_cells) const
+    int cx,
+    int cy,
+    double clearance_m) const
 {
-  // int clearance_cells = 2; // (map_resulotion*2)/map_resolution
-  int rad = std::ceil(sweep_dist_cells);
-  double clearance_sq = sweep_dist_cells * sweep_dist_cells;
+  int sweep_dist_cells = static_cast<int>(std::ceil(clearance_m * map_meta_data_.inv_resolution));
+  const int rad = sweep_dist_cells;
 
-  for (int dx = -rad; dx <= rad; ++dx) {
-      for (int dy = -rad; dy <= rad; ++dy) {
-          GridNode nbr{cx + dx, cy + dy};
+  if (!isMapCellFree(cx, cy, char_map))
+    return true;
 
-          if (!isGridOnMap(nbr)) { continue; }
-
-          if ((dx * dx + dy * dy <= clearance_sq) && !isMapCellFree(nbr, char_map)) {
-              return true;
-          }
-      }
-  }
-
-  return false;
-}
-
-
-bool TestPlanner::isNodeCloseToObstacle(
-    const int8_t* char_map,
-    GridNode &node) const
-{
-
-  // if(!isMapCellFree(node, char_map)) {
-  //       return true;
-  //   }
-
-  // for (const auto & d : dirs)
-  for (const auto & d : dirs_)
+  for (int dx = -rad; dx <= rad; ++dx)
   {
-    int nx = node.x + d.dx;
-    int ny = node.y + d.dy;
+    for (int dy = -rad; dy <= rad; ++dy)
+    {
+      if (!isGridOnMap(cx + dx, cy + dy))
+        continue;
 
-    if (!(isGridOnMap(node) && isMapCellFree(nx, ny, char_map))) {
+      if (!isMapCellFree(cx + dx, cy + dy, char_map))
         return true;
     }
-
   }
 
   return false;
 }
-
-
-bool TestPlanner::isEdgeRisky(
-    const int8_t* char_map,
-    GridNode* current,
-    GridNode* parent) const
-{
-  const double dx = current->x - parent->x;
-  const double dy = current->y - parent->y;
-  GridNode node(0,0);
-
-  const double length = std::sqrt(dx * dx + dy * dy);
-
-  if (length <= 0.0)
-      return false;
-
-  const int samples =
-      std::max(1, static_cast<int>(std::ceil(length/2)));
-
-  for (int i = 0; i <= samples; ++i)
-  {
-      const double t =
-          static_cast<double>(i) / samples;
-
-      const int x =
-          static_cast<int>(
-              std::round(parent->x + t * dx));
-
-      const int y =
-          static_cast<int>(
-              std::round(parent->y + t * dy));
-      
-      node.x = x;
-      node.y = y;
-      if (isNodeCloseToObstacle(char_map, node))
-          return true;
-  }
-
-  return false;
-}
-
-
-bool TestPlanner::shouldCheckLOS(
-    const int8_t* char_map,
-    GridNode* current,
-    GridNode* parent) const
-{
-    // Cheap test 1
-    if (isNodeCloseToObstacle(char_map, *current))
-        return true;
-
-    // Cheap test 2
-    if (isNodeCloseToObstacle(char_map, *parent))
-        return true;
-
-    // More expensive but still cheaper than LOS
-    if (isEdgeRisky(char_map, current, parent))
-        return true;
-
-    return false;
-}
-
-
-
-
-
-
-
 
 
 GridNode TestPlanner::poseToGrid(const geometry_msgs::msg::Pose &pose) const
@@ -683,6 +646,12 @@ bool TestPlanner::isGridOnMap(const GridNode &grid) const
           grid.y >= 0 && grid.y < map_meta_data_.size_y);
 }
 
+bool TestPlanner::isGridOnMap(const int x, const int y) const
+{
+  return (x >= 0 && x < map_meta_data_.size_x &&
+          y >= 0 && y < map_meta_data_.size_y);
+}
+
 bool TestPlanner::isMapCellFree(const GridNode &grid, const int8_t* char_map) const
 {
   return (char_map[gridToMapIndex(grid)] == 0);
@@ -701,13 +670,13 @@ double TestPlanner::euclidean_distance(const GridNode &a, const GridNode &b) con
 
 
 bool TestPlanner::lineOfSight(
-  GridNode *start,
-  GridNode *end,
+  GridNode *current,
+  GridNode *previous,
   const int8_t* char_map,
   unsigned int size_x) const
 {
-  int x0 = start->x, y0 = start->y;
-  int x1 = end->x, y1 = end->y;
+  int x0 = current->x, y0 = current->y;
+  int x1 = previous->x, y1 = previous->y;
 
   int dx = std::abs(x1 - x0), sx = (x0 < x1) ? 1 : -1;
   int dy = std::abs(y1 - y0), sy = (y0 < y1) ? 1 : -1;
@@ -748,159 +717,6 @@ bool TestPlanner::lineOfSight(
 
   // Final check for the destination node (x1, y1)
   return isSafe(x1, y1);
-}
-
-
-// bool TestPlanner::lineOfSight(
-//   GridNode *start,
-//   GridNode *end,
-//   const int8_t* char_map,
-//   unsigned int size_x) const
-// {
-//   int x0 = start->x, y0 = start->y;
-//   int x1 = end->x, y1 = end->y;
-
-//   int dx = std::abs(x1 - x0), sx = (x0 < x1) ? 1 : -1;
-//   int dy = std::abs(y1 - y0), sy = (y0 < y1) ? 1 : -1;
-//   int cx = x0, cy = y0, e = dx - dy;
-
-//   int max_x = static_cast<int>(map_meta_data_.size_x);
-//   int max_y = static_cast<int>(map_meta_data_.size_y);
-
-//   // Helper lambda to mirror isSafe() boundary and collision checks
-//   auto isSafe = [&](int x, int y) -> bool {
-//     if (x < 0 || x >= max_x || y < 0 || y >= max_y) {
-//       return false;
-//     }
-//     int idx = y * static_cast<int>(size_x) + x;
-//     return char_map[idx] == 0;
-//   };
-
-//   while (cx != x1 || cy != y1) {
-//     if (!isSafe(cx, cy)) {
-//       return false;
-//     }
-
-//     int e2 = 2 * e;
-//     if (e2 > -dy && e2 <= dx) {
-//       if (!isSafe(cx + sx, cy) || !isSafe(cx, cy + sy)) {
-//         return false;
-//       }
-//       cx += sx;
-//       cy += sy;
-//       e += dx - dy;
-//     } else if (e2 > -dy) {
-//       cx += sx;
-//       e -= dy;
-//     } else {
-//       cy += sy;
-//       e += dx;
-//     }
-//   }
-
-//   return true;
-// }
-
-
-GridNode* TestPlanner::get_node_from_pool(int x, int y, int index) {
-  GridNode* node = &node_pool_[index];
-  if (node_visited_id_[index] != run_id_) 
-  {
-    node->x = x;
-    node->y = y;
-    node->g_cost = std::numeric_limits<double>::infinity();
-    node->h_cost = 0.0;
-    node->f_cost = std::numeric_limits<double>::infinity();
-    node->prev = nullptr;
-    node->is_in_queue = false;
-
-    node_visited_id_[index] = run_id_;
-  }
-  return node;
-};
-
-std::vector<Dir> TestPlanner::generateDirections(int grid_radius) {
-  std::vector<Dir> dirs;
-  dirs.reserve((2 * grid_radius + 1) * (2 * grid_radius + 1) - 1);
-
-  for (int dx = -grid_radius; dx <= grid_radius; ++dx) {
-      for (int dy = -grid_radius; dy <= grid_radius; ++dy) {
-          if (dx == 0 && dy == 0) continue; // Skip center cell
-          dirs.push_back({dx, dy, 0.0});
-      }
-  }
-
-  // Sort by Euclidean distance so immediate neighbors come first
-  std::sort(dirs.begin(), dirs.end(), [](const Dir& a, const Dir& b) {
-      return (a.dx * a.dx + a.dy * a.dy) < (b.dx * b.dx + b.dy * b.dy);
-  });
-
-  return dirs;
-};
-
-std::vector<Dir> TestPlanner::generateDirectionRayCasts(int grid_radius) {
-  if (grid_radius <= 0) return {};
-
-  std::vector<Dir> dirs;
-
-  // Standard 8 directions: Up, Down, Left, Right + 4 Diagonals
-  const Dir baseDirs[8] = {
-      { 0,  1, 0.0}, { 0, -1, 0.0}, {-1,  0, 0.0}, { 1,  0, 0.0}, // Orthogonal
-      {-1,  1, 0.0}, { 1,  1, 0.0}, {-1, -1, 0.0}, { 1, -1, 0.0}  // Diagonal
-  };
-
-  // For Radius 1, return the standard 8 immediate neighbors
-  if (grid_radius == 1) {
-      return std::vector<Dir>(baseDirs, baseDirs + 8);
-  }
-
-  // For Radius R >= 2, fan out each of the 8 main ray axes
-  for (const auto& base : baseDirs) {
-      // Calculate the core line position at this radius
-      int cx = base.dx * grid_radius;
-      int cy = base.dy * grid_radius;
-
-      // Add the primary ray tip
-      dirs.push_back({cx, cy, 0.0});
-
-      // Add side-spread offsets to widen the ray sweep as it goes deeper
-      if (base.dx == 0) {
-          // Vertical ray: spread left and right (-X, +X)
-          dirs.push_back({cx - 1, cy, 0.0});
-      } else if (base.dy == 0) {
-          // Horizontal ray: spread up and down (-Y, +Y)
-          dirs.push_back({cx, cy - 1, 0.0});
-      } else {
-          // Diagonal ray: spread horizontally or vertically relative to main angle
-          dirs.push_back({cx - base.dx, cy, 0.0}); 
-      }
-  }
-
-  return dirs;
-}
-
-
-std::vector<Dir> TestPlanner::generateSquareRing(int radius) {
-  if (radius <= 0) return {};
-
-  std::vector<Dir> dirs;
-  dirs.reserve(8 * radius); // Exactly 8 * R cells
-
-  for (int dx = -radius; dx <= radius; ++dx) {
-    for (int dy = -radius; dy <= radius; ++dy) {
-      // Include only cells on the outer edge of the (2R+1) x (2R+1) square
-      if (std::abs(dx) == radius || std::abs(dy) == radius) {
-          dirs.push_back({dx, dy, 0.0});
-      }
-    }
-  }
-
-  // Sort radially (-PI to +PI) around the center
-  std::sort(dirs.begin(), dirs.end(), [](const Dir& a, const Dir& b) {
-    return std::atan2(a.dy, a.dx) < std::atan2(b.dy, b.dx);
-  });
-
-  return dirs;
 }
 
 
@@ -1011,7 +827,7 @@ nav_msgs::msg::Path TestPlanner::smoothPath(
 
     // Interior points only (preserve index 0 and num_points - 1)
     for (size_t i = 1; i < num_points - 1; ++i) {
-      const auto & prev = smoothed.poses[i - 1].pose.position;
+      const auto & parent = smoothed.poses[i - 1].pose.position;
       const auto & curr = smoothed.poses[i].pose.position;
       const auto & next = smoothed.poses[i + 1].pose.position;
       const auto & orig = orig_poses[i];
@@ -1020,8 +836,8 @@ nav_msgs::msg::Path TestPlanner::smoothPath(
       double rx = orig.x - curr.x;
       double ry = orig.y - curr.y;
 
-      double sx = prev.x + next.x - (2.0 * curr.x);
-      double sy = prev.y + next.y - (2.0 * curr.y);
+      double sx = parent.x + next.x - (2.0 * curr.x);
+      double sy = parent.y + next.y - (2.0 * curr.y);
 
       double update_x = curr.x + (w_data * rx) + (w_smooth * sx);
       double update_y = curr.y + (w_data * ry) + (w_smooth * sy);
@@ -1074,6 +890,584 @@ TestPlanner::fillUpPath(
 
   return smoothed;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// GridNode* TestPlanner::runLazyTheta(
+//   GridNode* start_node,
+//   GridNode* goal_node,
+//   const int8_t* char_map,
+//   unsigned int size_x,
+//   double & los_check_time,
+//   size_t & los_checks,
+//   size_t & los_checks_attempted,
+//   size_t & node_expansions,
+//   size_t & fallback_count,
+//   size_t & successful_parent_collapses)
+// {
+//   // Reset counters for this run
+//   los_check_time = 0.0;
+//   los_checks = 0;
+//   los_checks_attempted = 0;
+//   node_expansions = 0;
+//   fallback_count = 0;
+//   successful_parent_collapses = 0; // Always 0 for Lazy Theta* (Grandparent collapsing is DRSP-specific)
+
+//   int sid = gridToMapIndex(*start_node);
+
+//   start_node->g_cost = 0.0;
+//   start_node->h_cost = euclidean_distance(*start_node, *goal_node);
+//   start_node->parent = start_node;
+
+//   open_queue_.push(start_node);
+//   g_cost_cache_[sid] = 0.0;
+
+//   while (!open_queue_.empty() /*&& rclcpp::ok()*/)
+//   {
+
+//     GridNode* current = open_queue_.top();
+//     open_queue_.pop();
+
+//     int cid = gridToMapIndex(*current);
+
+//     if (visited_[cid]) {
+//       continue;
+//     }
+
+//     if (current->g_cost > g_cost_cache_[cid]) {
+//       continue;
+//     }
+
+//     // --------------------------------------------------
+//     // LAZY VALIDATION / SETVERTEX PHASE
+//     // --------------------------------------------------
+//     if (current->parent && current->parent != current)
+//     {
+//       auto start_time = std::chrono::high_resolution_clock::now();
+
+//       ++los_checks_attempted;
+//       ++los_checks;
+//       if (!lineOfSight(current, current->parent, char_map, size_x))
+//       {
+//         ++fallback_count;
+//         double min_g = std::numeric_limits<double>::infinity();
+//         GridNode* best_parent = nullptr;
+
+//         for (const auto & d : dirs)
+//         {
+//           int nx = current->x + d.dx;
+//           int ny = current->y + d.dy;
+//           int nid = gridToMapIndex(nx, ny);
+
+//           if (isGridOnMap(nx, ny) && isMapCellFree(nx, ny, char_map) && visited_[nid])
+//           {
+//             GridNode* nbr_node = get_node_from_pool2(nx, ny);
+//             double g_val = g_cost_cache_[nid];
+//             double cost_to_active = g_val + d.dist;
+//             if (cost_to_active < min_g) {
+//               min_g = cost_to_active;
+//               best_parent = nbr_node;
+//             }
+//           }
+//         }
+
+//         if (best_parent) {
+//           current->g_cost = min_g;
+//           g_cost_cache_[cid] = min_g;
+//           current->parent = best_parent;
+//         } 
+//         // else {
+//         //   visited_[cid] = true;
+//         //   continue; 
+//         // }
+//       }
+
+//       auto end_time = std::chrono::high_resolution_clock::now();
+//       los_check_time += std::chrono::duration<double, std::milli>(end_time - start_time).count();
+//     }
+
+//     if (current->x == goal_node->x && current->y == goal_node->y) {
+//       clearQueue();
+//       return current; // Path extraction target
+//     }
+
+//     visited_[cid] = true;
+
+//     ++node_expansions;
+//     // --------------------------------------------------
+//     // EXPAND NEIGHBORS (OPTIMISTIC UPDATE)
+//     // --------------------------------------------------
+//     for (const auto & d : dirs)
+//     {
+//       int nx = current->x + d.dx;
+//       int ny = current->y + d.dy;
+//       int nid = gridToMapIndex(nx, ny);
+
+//       if (isGridOnMap(nx, ny) && isMapCellFree(nx, ny, char_map) && !visited_[nid]) {
+//         GridNode* optimistic_parent = current->parent ? current->parent : current;
+//         GridNode* nbr_node = get_node_from_pool2(nx, ny);
+
+//         double optimistic_parent_g = g_cost_cache_[gridToMapIndex(*optimistic_parent)];
+
+//         double dist = euclidean_distance(*optimistic_parent, *nbr_node);
+//         double new_cost = optimistic_parent_g + dist;
+
+//         double current_nbr_cost = g_cost_cache_[nid];
+//         if (current_nbr_cost < 0.0 || new_cost < current_nbr_cost)
+//         {
+//           g_cost_cache_[nid] = new_cost;
+
+//           nbr_node->g_cost = new_cost;
+//           nbr_node->h_cost = euclidean_distance(*nbr_node, *goal_node);
+//           nbr_node->parent = optimistic_parent;
+
+//           open_queue_.push(nbr_node);
+//         }
+//       }
+//     }
+//   }
+
+//   return nullptr;
+// }
+
+
+
+
+
+
+
+
+
+// GridNode* TestPlanner::runLazyThetaSkipLOS(
+//   GridNode* start_node,
+//   GridNode* goal_node,
+//   const int8_t* char_map,
+//   unsigned int size_x,
+//   double & los_check_time,
+//   size_t & los_checks,
+//   size_t & los_checks_attempted,
+//   size_t & node_expansions,
+//   size_t & fallback_count,
+//   size_t & successful_parent_collapses)
+// {
+//   // Reset counters for this run
+//   los_checks = 0;
+//   los_checks_attempted = 0;
+//   node_expansions = 0;
+//   fallback_count = 0;
+//   successful_parent_collapses = 0; // Always 0 for Lazy Theta* (Grandparent collapsing is DRSP-specific)
+
+//   int sid = gridToMapIndex(*start_node);
+
+//   start_node->g_cost = 0.0;
+//   start_node->h_cost = euclidean_distance(*start_node, *goal_node);
+//   start_node->parent = start_node;
+//   start_node->grid_parent = start_node;
+
+//   open_queue_.push(start_node);
+//   g_cost_cache_[sid] = 0.0;
+
+//   while (!open_queue_.empty() /*&& rclcpp::ok()*/)
+//   {
+
+//     GridNode* current = open_queue_.top();
+//     open_queue_.pop();
+
+//     int cid = gridToMapIndex(*current);
+
+//     if (visited_[cid]) {
+//       continue;
+//     }
+
+//     if (current->g_cost > g_cost_cache_[cid]) {
+//       continue;
+//     }
+
+//     // --------------------------------------------------
+//     // LAZY VALIDATION / SETVERTEX PHASE
+//     // --------------------------------------------------
+//     if (current->parent && current->parent != current)
+//     {
+
+//       auto start_time = std::chrono::high_resolution_clock::now();
+
+//       ++los_checks_attempted;
+//       if(isNodeCloseToObstacle(*current) || isNodeDirectionChanged2(current)){
+//         ++los_checks;
+//         if (!lineOfSight(current, current->parent, char_map, size_x))
+//         {
+//           ++fallback_count;
+//           double min_g = std::numeric_limits<double>::infinity();
+//           GridNode* best_parent = nullptr;
+
+//           for (const auto & d : dirs)
+//           {
+//             int nx = current->x + d.dx;
+//             int ny = current->y + d.dy;
+//             int nid = gridToMapIndex(nx, ny);
+
+//             if (isGridOnMap(nx, ny) && isMapCellFree(nx, ny, char_map) && visited_[nid])
+//             {
+//               GridNode* nbr_node = get_node_from_pool2(nx, ny);
+//               double g_val = g_cost_cache_[nid];
+//               double cost_to_active = g_val + d.dist;
+//               if (cost_to_active < min_g) {
+//                 min_g = cost_to_active;
+//                 best_parent = nbr_node;
+//               }
+//             }
+//           }
+
+//           if (best_parent) {
+//             current->g_cost = min_g;
+//             g_cost_cache_[cid] = min_g;
+//             current->parent = best_parent;
+//             current->grid_parent = best_parent;
+//           } 
+//           // else {
+//           //   visited_[cid] = true;
+//           //   continue; 
+//           // }
+//         }
+//       }
+
+//       auto end_time = std::chrono::high_resolution_clock::now();
+//       los_check_time += std::chrono::duration<double, std::milli>(end_time - start_time).count();
+//     }
+
+//     if (current->x == goal_node->x && current->y == goal_node->y) {
+//       clearQueue();
+//       return current; // Path extraction target
+//     }
+
+//     visited_[cid] = true;
+
+//     ++node_expansions;
+//     // --------------------------------------------------
+//     // EXPAND NEIGHBORS (OPTIMISTIC UPDATE)
+//     // --------------------------------------------------
+//     for (const auto & d : dirs)
+//     {
+//       int nx = current->x + d.dx;
+//       int ny = current->y + d.dy;
+//       int nid = gridToMapIndex(nx, ny);
+
+//       if (isGridOnMap(nx, ny) && isMapCellFree(nx, ny, char_map) && !visited_[nid]) {
+//         GridNode* optimistic_parent = current->parent ? current->parent : current;
+//         GridNode* nbr_node = get_node_from_pool2(nx, ny);
+
+//         double optimistic_parent_g = g_cost_cache_[gridToMapIndex(*optimistic_parent)];
+
+//         double dist = euclidean_distance(*optimistic_parent, *nbr_node);
+//         double new_cost = optimistic_parent_g + dist;
+
+//         double current_nbr_cost = g_cost_cache_[nid];
+//         if (current_nbr_cost < 0.0 || new_cost < current_nbr_cost)
+//         {
+//           g_cost_cache_[nid] = new_cost;
+
+//           nbr_node->g_cost = new_cost;
+//           nbr_node->h_cost = euclidean_distance(*nbr_node, *goal_node);
+//           nbr_node->parent = optimistic_parent;
+//           nbr_node->grid_parent = current;
+
+//           open_queue_.push(nbr_node);
+//         }
+//       }
+//     }
+//   }
+
+//   return nullptr;
+// }
+
+
+
+
+
+GridNode* TestPlanner::get_node_from_pool(int x, int y) {
+  int index = gridToMapIndex(x, y);
+  GridNode* node = &node_pool_[index];
+  if (node_visited_id_[index] != run_id_) 
+  {
+    node->x = x;
+    node->y = y;
+    node->g_cost = std::numeric_limits<double>::infinity();
+    node->h_cost = 0.0;
+    node->parent = nullptr;
+    node->grid_parent = nullptr;
+    node->is_in_queue = false;
+
+    node_visited_id_[index] = run_id_;
+  }
+  return node;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// GridNode* TestPlanner::runAStar(
+//   GridNode* start_node,
+//   GridNode* goal_node,
+//   const int8_t* char_map,
+//   unsigned int size_x,
+//   double & los_check_time,
+//   size_t & los_checks,
+//   size_t & los_checks_attempted,
+//   size_t & node_expansions,
+//   size_t & fallback_count,
+//   size_t & successful_parent_collapses,
+//   bool smooth)
+// {
+//   // Reset counters for this run
+//   los_check_time = 0.0;
+//   los_checks = 0;
+//   los_checks_attempted = 0;
+//   node_expansions = 0;
+//   fallback_count = 0;
+//   successful_parent_collapses = 0; // Always 0 for Lazy Theta* (Grandparent collapsing is DRSP-specific)
+
+//   start_node->g_cost = 0.0;
+//   start_node->h_cost = euclidean_distance(*start_node, *goal_node);
+//   start_node->is_in_queue = true;
+//   start_node->parent = start_node;
+
+//   open_queue_.push(*start_node);
+
+//   while (!open_queue_.empty())
+//   {
+//     GridNode current_node = open_queue_.top();
+//     open_queue_.pop();
+//     update_node_pool(current_node);
+//     GridNode* current = get_node_from_pool(current_node.x, current_node.y);
+
+//     current->is_in_queue = false;
+
+//     if (current->x == goal_node->x && current->y == goal_node->y) {
+//       if(smooth){
+//         clearQueue();
+//         return greedyStringPullSmooth(
+//           current,
+//           char_map, 
+//           size_x,
+//           los_check_time,
+//           los_checks,
+//           los_checks_attempted,
+//           fallback_count,
+//           successful_parent_collapses
+//         );
+//       }
+//       clearQueue();
+//       return current;
+//     }
+    
+//     node_expansions++; // Node Expansion metric counter
+
+//     // UpdateVertex Expansion Phase
+//     for (const auto & d : dirs)
+//     {
+//       int nx = current->x + d.dx;
+//       int ny = current->y + d.dy;
+
+//       GridNode* nbr_node = get_node_from_pool(nx, ny);
+
+//       if (isGridOnMap(*nbr_node) && isMapCellFree(*nbr_node, char_map)) {
+//         double g_cost = current->g_cost + d.dist;
+//         double h_cost = euclidean_distance(*nbr_node, *goal_node);
+//         double f_cost = g_cost + h_cost;
+
+//         if ((nbr_node->g_cost + nbr_node->h_cost) > f_cost)
+//         {
+//           nbr_node->g_cost = g_cost;
+//           nbr_node->h_cost = h_cost;
+//           nbr_node->parent = current;
+
+//           if(!nbr_node->is_in_queue){
+//             nbr_node->is_in_queue = true;
+//             open_queue_.push(*nbr_node);
+//           }
+//         }
+
+//         // visited_map_.data.at(gridToMapIndex(*current)) = 10;
+//         // map_pub_->publish(visited_map_);
+//       }
+//     }
+
+//   }
+
+//   return nullptr;
+// }
+
+
+
+
+
+
+
+// GridNode* TestPlanner::greedyStringPullSmooth(
+//   GridNode* grid_node_path,
+//   const int8_t* char_map,
+//   unsigned int size_x,
+//   double & los_check_time,
+//   size_t & los_checks,
+//   size_t & los_checks_attempted,
+//   size_t & fallback_count,
+//   size_t & successful_parent_collapses)
+// {
+//   if (!grid_node_path) {
+//     return nullptr;
+//   }
+
+//   // 1. Unwind the linked list path from Goal -> Start into a vector
+//   std::vector<GridNode*> poses;
+//   GridNode* current = grid_node_path;
+  
+//   while (current != nullptr) {
+//     poses.push_back(current);
+    
+//     if (current->parent == current || current->parent == nullptr) {
+//       break;
+//     }
+//     current = current->parent;
+//   }
+
+//   std::reverse(poses.begin(), poses.end());
+
+//   int n = static_cast<int>(poses.size());
+
+//   if (n <= 2) {
+//     return grid_node_path;
+//   }
+
+//   int i = 0;
+//   int j = 2;
+
+//   std::vector<GridNode*> smoothed_poses;
+//   smoothed_poses.push_back(poses[0]);
+
+//   while (true) {
+//     if (!(j < n)) {
+//       break;
+//     }
+
+//     auto start_time = std::chrono::high_resolution_clock::now();
+//     ++los_checks_attempted;
+//     if(isNodeCloseToObstacle(*poses[j]) || isNodeDirectionChanged(poses[j])){
+//       ++los_checks;
+//       if (lineOfSight(poses[j], poses[i], char_map, size_x)) {
+//         j = j;
+//         ++successful_parent_collapses;
+//       } else {
+//         ++fallback_count;
+//         i = j - 1;
+        
+//         poses[i]->parent = smoothed_poses.back();
+//         smoothed_poses.push_back(poses[i]);
+//       }
+//     }
+
+//     auto end_time = std::chrono::high_resolution_clock::now();
+//     los_check_time += std::chrono::duration<double, std::milli>(end_time - start_time).count();
+
+//     j += 1;
+//   }
+
+//   i = j - 1;
+//   poses[i]->parent = smoothed_poses.back();
+//   smoothed_poses.push_back(poses[i]);
+
+//   GridNode* smoothed_grid_node_path = smoothed_poses.back();
+//   return smoothed_grid_node_path;
+// }
+
+
 
 
 }  // namespace test_planner

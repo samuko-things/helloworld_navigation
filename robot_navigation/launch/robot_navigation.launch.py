@@ -52,7 +52,8 @@ def generate_launch_description():
         name='test_planner',
         output='screen',
         parameters=[
-          {'planner_id': 1 }
+          {'planner_id': 0},
+          {'dist_to_obstacle_check': 0.25}
         ],
       )
 

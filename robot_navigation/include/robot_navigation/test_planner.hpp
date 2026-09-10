@@ -37,14 +37,21 @@ struct GridNode
 
   double g_cost{0.0};
   double h_cost{0.0};
-  double f_cost{0.0};
 
   bool is_in_queue{false};
 
-  GridNode *prev{nullptr};
   GridNode *parent{nullptr};
+  GridNode *grid_parent{nullptr};
 
   GridNode(int _x = 0, int _y = 0) : x(_x), y(_y) {}
+};
+
+struct CompareNode
+{
+  bool operator()(const GridNode* a, const GridNode* b) const
+  {
+    return (a->g_cost + a->h_cost) > (b->g_cost + b->h_cost);
+  }
 };
 
 struct Dir
@@ -79,18 +86,6 @@ class TestPlanner : public rclcpp::Node
 public:
   TestPlanner();
 
-  struct CompareNode
-  {
-    bool operator()(
-      const GridNode* a,
-      const GridNode* b) const
-    {
-      // Keeps the evaluation simple and fast for priority sorting tree shifts
-      // return (a->g_cost + a->h_cost) > (b->g_cost + b->h_cost);
-      return (a->f_cost) > (b->f_cost);
-    }
-  };
-
 private:
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_sub_;
@@ -112,25 +107,52 @@ private:
     const geometry_msgs::msg::PoseStamped &start_pose,
     const geometry_msgs::msg::PoseStamped &goal_pose);
 
-  GridNode* runLazyThetaStarPlan(
+  GridNode* runLazyTheta(
     GridNode* start_node,
     GridNode* goal_node,
     const int8_t* char_map,
     unsigned int size_x,
+    double & los_check_time,
     size_t & los_checks,
+    size_t & los_checks_attempted,
     size_t & node_expansions,
     size_t & fallback_count,
     size_t & successful_parent_collapses);
 
-  GridNode* runLazyThetaStarPlanTest(
+  GridNode* runLazyThetaSkipLOS(
     GridNode* start_node,
     GridNode* goal_node,
     const int8_t* char_map,
     unsigned int size_x,
+    double & los_check_time,
     size_t & los_checks,
+    size_t & los_checks_attempted,
     size_t & node_expansions,
     size_t & fallback_count,
     size_t & successful_parent_collapses);
+
+  // GridNode* runAStar(
+  //   GridNode* start_node,
+  //   GridNode* goal_node,
+  //   const int8_t* char_map,
+  //   unsigned int size_x,
+  //   double & los_check_time,
+  //   size_t & los_checks,
+  //   size_t & los_checks_attempted,
+  //   size_t & node_expansions,
+  //   size_t & fallback_count,
+  //   size_t & successful_parent_collapses,
+  //   bool smooth=true);
+
+  // GridNode* greedyStringPullSmooth(
+  //   GridNode* grid_node_path,
+  //   const int8_t* char_map,
+  //   unsigned int size_x,
+  //   double & los_check_time,
+  //   size_t & los_checks,
+  //   size_t & los_checks_attempted,
+  //   size_t & fallback_count,
+  //   size_t & successful_parent_collapses);
 
   GridNode poseToGrid(const geometry_msgs::msg::Pose &pose) const;
 
@@ -142,6 +164,8 @@ private:
 
   bool isGridOnMap(const GridNode &grid) const;
 
+  bool isGridOnMap(const int x, const int y) const;
+
   bool isMapCellFree(const GridNode &grid, const int8_t* char_map) const;
 
   bool isMapCellFree(const int x, const int y, const int8_t* char_map) const;
@@ -150,33 +174,15 @@ private:
 
   bool isCloseToObstacle(
     const int8_t* char_map,
-    int cx, int cy,
-    int sweep_dist_cells) const;
-
-  bool isNodeCloseToObstacle(
-    const int8_t* char_map,
-    GridNode &node) const;
-
-  bool isEdgeRisky(
-    const int8_t* char_map,
-    GridNode* current,
-    GridNode* parent) const;
-
-  bool shouldCheckLOS(
-    const int8_t* char_map,
-    GridNode *current,
-    GridNode *parent
-  ) const;
+    int cx,
+    int cy,
+    double clearance_m) const;
 
   bool lineOfSight(
-    GridNode *start,
-    GridNode *end,
+    GridNode *current,
+    GridNode *previous,
     const int8_t* char_map,
     unsigned int size_x) const;
-
-  std::vector<Dir> generateDirections(int grid_radius);
-  std::vector<Dir> generateDirectionRayCasts(int grid_radius);
-  std::vector<Dir> generateSquareRing(int grid_radius);
 
   std::vector<geometry_msgs::msg::PoseStamped>
   addStraightLinePoses(
@@ -200,18 +206,24 @@ private:
     const geometry_msgs::msg::PoseStamped & goal,
     bool smooth=true) const;
 
-  GridNode* get_node_from_pool(int x, int y, int index);
+  GridNode* get_node_from_pool(int x, int y);
+
+  GridNode* get_node_from_pool2(int x, int y);
 
   MapMetaData map_meta_data_;
 
   std::vector<GridNode> node_pool_;
-  std::vector<bool> node_initialized_; 
   std::vector<int> node_visited_id_;
   int run_id_ = 0;
+
+  std::vector<GridNode> node2_pool_;
+  std::vector<bool> node2_initialized_; 
   std::vector<double> g_cost_cache_;
+  std::vector<bool> visited_;
 
   int los_shortcut_cost_limit_;
   double cost_travel_multiplier_;
+  double dist_to_obstacle_check_ = 0.25;
 
   int planner_id_ = 1;
 
@@ -226,9 +238,84 @@ private:
     { 1,  1, 1.4142}
   };
 
-  std::vector<Dir> dirs_;
-
   rclcpp::Logger logger_{rclcpp::get_logger("TestPlanner")};
+
+  std::priority_queue<
+    GridNode*,
+    std::vector<GridNode*>,
+    CompareNode
+  > open_queue_;
+
+  void clearQueue(){
+    open_queue_ = std::priority_queue<GridNode*, std::vector<GridNode*>, CompareNode>();
+  };
+
+
+
+  
+  //  ---------------- FUNCTIONS FOR LOS SKIP ----------------------
+
+  std::vector<bool> obstacle_proximity_map_;
+
+  // Call this ONCE whenever the map loads or updates
+  void preprocessObstacleProximity(const int8_t* char_map, double dist_to_obs) {
+    const int height = map_meta_data_.size_y;
+    const int width = map_meta_data_.size_x;
+    const int total_cells = width * height;
+
+    obstacle_proximity_map_.assign(total_cells, false);
+
+    for (int cy = 0; cy < height; ++cy)
+    {
+        for (int cx = 0; cx < width; ++cx)
+        {
+            const int index = cy * width + cx;
+            obstacle_proximity_map_[index] = isCloseToObstacle(char_map, cx, cy, dist_to_obs);
+        }
+    }
+  };
+
+  inline bool isNodeCloseToObstacle(int x, int y) const {
+    if (!isGridOnMap(x, y))
+    {
+      return false;
+    }
+
+    return obstacle_proximity_map_[y * map_meta_data_.size_x + x];
+  };
+
+  inline bool isNodeCloseToObstacle(const GridNode& node) const {
+      return isNodeCloseToObstacle(node.x, node.y);
+  };
+
+  inline bool isNodeDirectionChanged2(const GridNode* node) {
+    if (!node || !node->grid_parent || !node->grid_parent->grid_parent) {
+        return false;
+    }
+
+    auto sign = [&](int val) -> int {
+      return (0 < val) - (val < 0);
+    };
+
+    const GridNode* n3 = node;
+    const GridNode* n2 = node->grid_parent;
+    const GridNode* n1 = node->grid_parent->grid_parent;
+
+    // 2. Vector 1: n1 -> n2
+    int dx1 = sign(n2->x - n1->x);
+    int dy1 = sign(n2->y - n1->y);
+
+    // 3. Vector 2: n2 -> n3
+    int dx2 = sign(n3->x - n2->x);
+    int dy2 = sign(n3->y - n2->y);
+
+    // 4. Direction changes if normalized step vectors differ
+    return (dx1 != dx2) || (dy1 != dy2);
+  }
+
+  //  -------------------------------------------------------------
+
+
 };
 
 }  // namespace test_planner
