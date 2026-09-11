@@ -543,13 +543,10 @@ GridNode* TestPlanner::runLazyThetaSkipLOS(
 
 
 
-
-
-
-GridNode* TestPlanner::get_node_from_pool2(int x, int y) {
+GridNode* TestPlanner::get_node_from_pool(int x, int y) {
   int index = gridToMapIndex(x, y);
-  GridNode* node = &node2_pool_[index];
-  if (!node2_initialized_[index]) 
+  GridNode* node = &node_pool_[index];
+  if (node_visited_id_[index] != run_id_) 
   {
     node->x = x;
     node->y = y;
@@ -559,7 +556,7 @@ GridNode* TestPlanner::get_node_from_pool2(int x, int y) {
     node->grid_parent = nullptr;
     node->is_in_queue = false;
 
-    node2_initialized_[index] = true;
+    node_visited_id_[index] = run_id_;
   }
   return node;
 };
@@ -1241,26 +1238,26 @@ TestPlanner::fillUpPath(
 
 
 
-GridNode* TestPlanner::get_node_from_pool(int x, int y) {
-  int index = gridToMapIndex(x, y);
-  GridNode* node = &node_pool_[index];
-  if (node_visited_id_[index] != run_id_) 
-  {
-    node->x = x;
-    node->y = y;
-    node->g_cost = std::numeric_limits<double>::infinity();
-    node->h_cost = 0.0;
-    node->parent = nullptr;
-    node->grid_parent = nullptr;
-    node->is_in_queue = false;
-
-    node_visited_id_[index] = run_id_;
-  }
-  return node;
-};
 
 
 
+// GridNode* TestPlanner::get_node_from_pool2(int x, int y) {
+//   int index = gridToMapIndex(x, y);
+//   GridNode* node = &node2_pool_[index];
+//   if (!node2_initialized_[index]) 
+//   {
+//     node->x = x;
+//     node->y = y;
+//     node->g_cost = std::numeric_limits<double>::infinity();
+//     node->h_cost = 0.0;
+//     node->parent = nullptr;
+//     node->grid_parent = nullptr;
+//     node->is_in_queue = false;
+
+//     node2_initialized_[index] = true;
+//   }
+//   return node;
+// };
 
 
 

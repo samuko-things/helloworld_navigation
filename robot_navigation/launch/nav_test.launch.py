@@ -21,9 +21,10 @@ def generate_launch_description():
   nav_params_file = os.path.join(robot_nav_pkg_path, 'config', nav_params_file_name)
 
   # Set the path to the map file used by AMCL
-  world_file_name = 'room_with_walls'
+  # world_file_name = 'room_with_walls'
   # world_file_name = 'bookstore'
   # world_file_name = 'hospital'
+  world_file_name = 'simple_maze'
  
   bt_nav_to_pose_xml = os.path.join(robot_nav_pkg_path, 'config', 'bt', 'navigate_to_pose_w_smoothing.xml')
   bt_nav_through_poses_xml = os.path.join(robot_nav_pkg_path, 'config', 'bt', 'navigate_through_pose_w_smoothing.xml')

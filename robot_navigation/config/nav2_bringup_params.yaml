@@ -99,8 +99,8 @@ global_costmap:
           obstacle_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 4.5
-        inflation_radius: 0.45
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.5
       always_send_full_costmap: True
       # lethal_cost_threshold: 200
 
@@ -134,8 +134,8 @@ local_costmap:
           obstacle_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 4.5
-        inflation_radius: 0.45
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.5
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: true
@@ -168,27 +168,28 @@ local_costmap:
 #       w_traversal_cost: 3.0
 
 
-# planner_server:
-#   ros__parameters:
-#     use_sim_time: true
-#     expected_planner_frequency: 10.0
-#     planner_plugins: ["GridBased"]
-#     GridBased:
-#       plugin: "test_planner_plugin::TestPlanner"
-#       los_shortcut_cost_limit: 3    # Strict limit for line-of-sight shortcuts through the inflation layer (value ranges from 1-100)
-#       cost_travel_multiplier: 3.0   # Weight for penalizing traversal through inflation (try values between 1.0 to 3.0)
-#       planner_id: 1
-
-
 planner_server:
   ros__parameters:
     use_sim_time: true
     expected_planner_frequency: 10.0
     planner_plugins: ["GridBased"]
     GridBased:
-      plugin: "lazy_theta_planner::LazyThetaPlanner"
-      los_shortcut_cost_limit: 3    # Strict limit for line-of-sight shortcuts through the inflation layer (value ranges from 1-100)
+      plugin: "test_planner_plugin::TestPlanner"
+      planner_id: 1
+      los_shortcut_cost_limit: 5    # Strict limit for line-of-sight shortcuts through the inflation layer (value ranges from 1-100)
       cost_travel_multiplier: 3.0   # Weight for penalizing traversal through inflation (try values between 1.0 to 3.0)
+      dist_to_obstacle_check: 0.2
+
+
+# planner_server:
+#   ros__parameters:
+#     use_sim_time: true
+#     expected_planner_frequency: 10.0
+#     planner_plugins: ["GridBased"]
+#     GridBased:
+#       plugin: "lazy_theta_planner::LazyThetaPlanner"
+#       los_shortcut_cost_limit: 3    # Strict limit for line-of-sight shortcuts through the inflation layer (value ranges from 1-100)
+#       cost_travel_multiplier: 3.0   # Weight for penalizing traversal through inflation (try values between 1.0 to 3.0)
 
 
 
