@@ -288,7 +288,7 @@ private:
       return isNodeCloseToObstacle(node.x, node.y);
   };
 
-  inline bool isNodeDirectionChanged2(const GridNode* node) {
+  inline bool isNodeDirectionChanged(const GridNode* node) {
     if (!node || !node->grid_parent || !node->grid_parent->grid_parent) {
         return false;
     }

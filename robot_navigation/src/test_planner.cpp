@@ -470,7 +470,7 @@ GridNode* TestPlanner::runLazyThetaSkipLOS(
     {
       auto start_time = std::chrono::high_resolution_clock::now();
       ++los_checks_attempted;
-      if(isNodeCloseToObstacle(*current) || isNodeDirectionChanged2(current))
+      if(isNodeCloseToObstacle(*current) || isNodeDirectionChanged(current))
       {
         // visited_map_.data.at(gridToMapIndex(*current)) = 10;
         // map_pub_->publish(visited_map_);
@@ -1149,7 +1149,7 @@ TestPlanner::fillUpPath(
 //       auto start_time = std::chrono::high_resolution_clock::now();
 
 //       ++los_checks_attempted;
-//       if(isNodeCloseToObstacle(*current) || isNodeDirectionChanged2(current)){
+//       if(isNodeCloseToObstacle(*current) || isNodeDirectionChanged(current)){
 //         ++los_checks;
 //         if (!lineOfSight(current, current->parent, char_map, size_x))
 //         {
@@ -1439,7 +1439,7 @@ GridNode* TestPlanner::get_node_from_pool(int x, int y) {
 
 //     auto start_time = std::chrono::high_resolution_clock::now();
 //     ++los_checks_attempted;
-//     if(isNodeCloseToObstacle(*poses[j]) || isNodeDirectionChanged(poses[j])){
+//     if(isNodeCloseToObstacle(*poses[j]) || isNodeDirectionChanged2(poses[j])){
 //       ++los_checks;
 //       if (lineOfSight(poses[j], poses[i], char_map, size_x)) {
 //         j = j;
