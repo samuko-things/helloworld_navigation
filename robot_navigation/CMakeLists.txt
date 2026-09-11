@@ -30,6 +30,9 @@ include_directories(include)
 add_executable(test_planner src/test_planner.cpp)
 ament_target_dependencies(test_planner ${dependencies})
 
+add_executable(test_planner_c src/test_planner_c.cpp)
+ament_target_dependencies(test_planner_c ${dependencies})
+
 install(
   DIRECTORY include
   DESTINATION include
@@ -37,6 +40,7 @@ install(
 
 install(TARGETS
   test_planner
+  test_planner_c
   DESTINATION lib/${PROJECT_NAME}
 )
 #-----------------------------------------------
