@@ -46,6 +46,12 @@ struct GridNode
   GridNode(int _x = 0, int _y = 0) : x(_x), y(_y) {}
 };
 
+struct OutputPaths
+{
+  nav_msgs::msg::Path theta_path;
+  nav_msgs::msg::Path astar_path;
+};
+
 struct CompareNode
 {
   bool operator()(const GridNode* a, const GridNode* b) const
@@ -90,6 +96,7 @@ private:
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_sub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr a_path_pub_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
 
   nav_msgs::msg::OccupancyGrid::SharedPtr map_;
@@ -103,15 +110,14 @@ private:
   void mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr map);
   void goalCallback(const geometry_msgs::msg::PoseStamped::SharedPtr goal_pose);
 
-  nav_msgs::msg::Path plan(
+  // nav_msgs::msg::Path plan(
+  OutputPaths plan(
     const geometry_msgs::msg::PoseStamped &start_pose,
     const geometry_msgs::msg::PoseStamped &goal_pose);
 
   GridNode* runLazyTheta(
     GridNode* start_node,
     GridNode* goal_node,
-    const int8_t* char_map,
-    unsigned int size_x,
     double & los_check_time,
     size_t & los_checks,
     size_t & los_checks_attempted,
@@ -122,8 +128,6 @@ private:
   GridNode* runLazyThetaSkipLOS(
     GridNode* start_node,
     GridNode* goal_node,
-    const int8_t* char_map,
-    unsigned int size_x,
     double & los_check_time,
     size_t & los_checks,
     size_t & los_checks_attempted,
@@ -131,11 +135,40 @@ private:
     size_t & fallback_count,
     size_t & successful_parent_collapses);
 
+  void computeCost(GridNode* current, GridNode* neighbor);
+  void updateVertex(GridNode* current, GridNode* neighbor, GridNode* goal);
+  bool setVertex(GridNode* current, size_t & fallback_count);
+  bool setVertexTest(GridNode* current);
+
+
+  GridNode* runLazyThetaSkipLOS_V2(
+    GridNode* start_node,
+    GridNode* goal_node,
+    double & los_check_time,
+    size_t & los_checks,
+    size_t & los_checks_attempted,
+    size_t & node_expansions,
+    size_t & fallback_count,
+    size_t & successful_parent_collapses);
+
+
+  GridNode* runLLAStar(
+    GridNode* start_node,
+    GridNode* goal_node,
+    double & los_check_time,
+    size_t & los_checks,
+    size_t & los_checks_attempted,
+    size_t & node_expansions,
+    size_t & fallback_count,
+    size_t & successful_parent_collapses);
+
+  void updateVertexLLA(GridNode* current, GridNode* neighbor, GridNode* goal);
+  bool lateUpdateVertex(GridNode* current, size_t& successful_parent_collapses);
+
+
   // GridNode* runAStar(
   //   GridNode* start_node,
   //   GridNode* goal_node,
-  //   const int8_t* char_map,
-  //   unsigned int size_x,
   //   double & los_check_time,
   //   size_t & los_checks,
   //   size_t & los_checks_attempted,
@@ -146,8 +179,6 @@ private:
 
   // GridNode* greedyStringPullSmooth(
   //   GridNode* grid_node_path,
-  //   const int8_t* char_map,
-  //   unsigned int size_x,
   //   double & los_check_time,
   //   size_t & los_checks,
   //   size_t & los_checks_attempted,
@@ -166,23 +197,15 @@ private:
 
   bool isGridOnMap(const int x, const int y) const;
 
-  bool isMapCellFree(const GridNode &grid, const int8_t* char_map) const;
+  bool isMapCellFree(const GridNode &grid) const;
 
-  bool isMapCellFree(const int x, const int y, const int8_t* char_map) const;
+  bool isMapCellFree(const int x, const int y) const;
 
   double euclidean_distance(const GridNode &a, const GridNode &b) const;
 
-  bool isCloseToObstacle(
-    const int8_t* char_map,
-    int cx,
-    int cy,
-    double clearance_m) const;
+  bool isCloseToObstacle(int cx, int cy, double clearance_m) const;
 
-  bool lineOfSight(
-    GridNode *current,
-    GridNode *previous,
-    const int8_t* char_map,
-    unsigned int size_x) const;
+  bool lineOfSight(GridNode *current, GridNode *previous) const;
 
   std::vector<geometry_msgs::msg::PoseStamped>
   addStraightLinePoses(
@@ -221,11 +244,9 @@ private:
   std::vector<double> g_cost_cache_;
   std::vector<bool> visited_;
 
-  int los_shortcut_cost_limit_;
-  double cost_travel_multiplier_;
+  int planner_id_ = 0;
   double dist_to_obstacle_check_ = 0.25;
-
-  int planner_id_ = 1;
+  bool show_los_viz_ = false;
 
   Dir dirs[8] = {
     {-1,  0, 1.0},
@@ -258,7 +279,7 @@ private:
   std::vector<bool> obstacle_proximity_map_;
 
   // Call this ONCE whenever the map loads or updates
-  void preprocessObstacleProximity(const int8_t* char_map, double dist_to_obs) {
+  void preprocessObstacleProximity(double dist_to_obs) {
     const int height = map_meta_data_.size_y;
     const int width = map_meta_data_.size_x;
     const int total_cells = width * height;
@@ -270,7 +291,7 @@ private:
         for (int cx = 0; cx < width; ++cx)
         {
             const int index = cy * width + cx;
-            obstacle_proximity_map_[index] = isCloseToObstacle(char_map, cx, cy, dist_to_obs);
+            obstacle_proximity_map_[index] = isCloseToObstacle(cx, cy, dist_to_obs);
         }
     }
   };
