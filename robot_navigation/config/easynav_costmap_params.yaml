@@ -79,8 +79,8 @@ maps_manager_node:
       freq: 10.0 
       plugin: easynav_costmap_maps_manager/CostmapMapsManager
       package: robot_navigation
-      # map_path_file: maps/room_with_walls.yaml
-      map_path_file: maps/bookstore.yaml
+      map_path_file: maps/room_with_walls.yaml
+      # map_path_file: maps/bookstore.yaml
       filters: [obstacles, inflation]
       obstacles:
         plugin: easynav_costmap_maps_manager/CostmapMapsManager/ObstaclesFilter
@@ -106,10 +106,9 @@ planner_node:
     planner_types: [costmap]
     costmap:
       freq: 0.5
-      plugin: easynav_test_costmap_planner/TestCostmapPlanner
+      plugin: easynav_lazy_theta_costmap_planner/LazyThetaCostmapPlanner
       los_shortcut_cost_limit_: 5 # Strict limit for line-of-sight shortcuts through the inflation layer (value ranges from 1-100)
       cost_travel_multiplier_: 3.0 # Weight for penalizing traversal through inflation (try values between 1.0 to 3.0)
-      smooth_path_: true # whether to smooth the final path
       continuous_replan_: true    # Wheter replan path at freq time
 
 sensors_node:

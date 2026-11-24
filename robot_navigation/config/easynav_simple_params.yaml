@@ -72,8 +72,8 @@ maps_manager_node:
       freq: 10.0
       plugin: easynav_simple_maps_manager/SimpleMapsManager
       package: robot_navigation
-      # map_path_file: maps/room_with_walls.map
-      map_path_file: maps/bookstore.map
+      map_path_file: maps/room_with_walls.map
+      # map_path_file: maps/bookstore.map
 
 planner_node:
   ros__parameters:
@@ -82,7 +82,7 @@ planner_node:
     simple:
       freq: 0.5
       # plugin: easynav_simple_planner/SimplePlanner
-      plugin: easynav_test_simple_planner/TestSimplePlanner
+      plugin: easynav_lazy_theta_simple_planner/LazyThetaSimplePlanner
       robot_radius: 0.15
 
 sensors_node:

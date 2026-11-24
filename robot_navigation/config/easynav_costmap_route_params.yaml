@@ -107,7 +107,7 @@ planner_node:
     planner_types: [costmap]
     costmap:
       freq: 0.5
-      plugin: easynav_costmap_planner/CostmapPlanner
+      plugin: easynav_lazy_theta_costmap_planner/LazyThetaCostmapPlanner
       cost_factor: 10.0
       continuous_replan: true
 
