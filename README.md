@@ -1,7 +1,7 @@
 ## My Helloworld Navigation (ROS2 Jazzy) Test with Nav2 Lazy Theta Planner 
 
 
-#### Install and build Build Robot Navigation with EasNav
+#### Install and build Build Robot Navigation and Nav2 Lazy Theta Planner 
 
 - clone the robot navigation repo (**helloworld_navigation**) in your workspace
 ```shell
