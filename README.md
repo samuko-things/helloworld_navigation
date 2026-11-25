@@ -33,35 +33,6 @@ source ~/<your_workspace>/install/setup.bash
 
 ---
 
-#### Run EasyNav Mapping
-
-- run mapping (simple or costmap)
-```shell
-ros2 launch robot_simulation sim.launch.py #gui:=false
-```
-```shell
-ros2 launch robot_navigation mapping.launch.py #use_costmap:=true
-```
-
----
-
-#### Save EasyNav SimpleMap or CostMap
-
-- save simple map with easynav
-```shell
-ros2 service call /maps_manager_node/simple/savemap std_srvs/srv/Trigger
-```
-```shell
-mv /tmp/default.map ~/ros_ws/src/helloworld_navigation/robot_navigation/maps/room_with_walls.map
-```
-
-- save costmap map in easynav with slamtoolbox
-```shell
-ros2 service call /slam_toolbox/save_map slam_toolbox/srv/SaveMap "{name: {data: '/home/$USER/ros_ws/src/helloworld_navigation/robot_navigation/maps/room_with_walls'}}"
-```
-
----
-
 #### Run EasyNav Navigation
 
 - run navigation (simple map)
@@ -95,4 +66,33 @@ ros2 service call /maps_manager_node/routes/save_routes std_srvs/srv/Trigger {}
 ```
 ```shell
 mv /tmp/routes.yaml ~/ros_ws/src/helloworld_navigation/robot_navigation/maps/<route_name>.yaml
+```
+
+---
+
+#### Run EasyNav Mapping
+
+- run mapping (simple or costmap)
+```shell
+ros2 launch robot_simulation sim.launch.py #gui:=false
+```
+```shell
+ros2 launch robot_navigation mapping.launch.py #use_costmap:=true
+```
+
+---
+
+#### Save EasyNav SimpleMap or CostMap
+
+- save simple map with easynav
+```shell
+ros2 service call /maps_manager_node/simple/savemap std_srvs/srv/Trigger
+```
+```shell
+mv /tmp/default.map ~/ros_ws/src/helloworld_navigation/robot_navigation/maps/room_with_walls.map
+```
+
+- save costmap map in easynav with slamtoolbox
+```shell
+ros2 service call /slam_toolbox/save_map slam_toolbox/srv/SaveMap "{name: {data: '/home/$USER/ros_ws/src/helloworld_navigation/robot_navigation/maps/room_with_walls'}}"
 ```
