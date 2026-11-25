@@ -1,11 +1,41 @@
-## My Helloworld Navigation (ROS2 Jazzy)
-![mobo_bot_pic](./docs/smooth_test1.gif)
+## My Helloworld Navigation (ROS2 Jazzy) Test with Nav2 Lazy Theta Planner 
 
-build and testing differnent planner, controller, smoother, bt, etc.
 
-#
+#### Install and build Build Robot Navigation with EasNav
 
-📚 Resources:
-- [Self-Driving Planning Course](https://www.udemy.com/share/10d4U53@J5jcGUgRzDALXhLAGOMWxU6dAnWoZ-g8zGFl1djv_uJFHfRN5X0qLnnhFUJ_xl7J/) by Antonio Brandi
-- [Improved AStar](https://www.sciencedirect.com/science/article/pii/S2468227621003690) by Dr. Oluwaseun Martins
-- [MoboBot](https://github.com/robocre8/mobo_bot) – developed by me under [robocre8](https://github.com/robocre8)
+- clone the robot navigation repo (**helloworld_navigation**) in your workspace
+```shell
+cd ~/<your_workspace>/src && git clone -b nav2-test https://github.com/samuko-things/helloworld_navigation.git
+```
+
+- clone the nav2 lazy theta planner repo ([**nav2_lazy_theta_planner**](https://github.com/samuko-things/nav2_lazy_theta_planner)) in your workspace
+```shell
+cd ~/<your_workspace>/src && git clone -b jazzy https://github.com/samuko-things/nav2_lazy_theta_planner.git
+```
+
+- install all necessary dependencies for robot and easynav navigation (ensure you have rosdep installed)
+```shell
+cd ~/<your_workspace> && rosdep update && rosdep install --from-paths src --ignore-src -r -y
+```
+
+---
+
+#### Source Necessary Workspace
+
+- ensure you source necessary workspace/packages
+```shell
+source /opt/ros/jazzy/setup.bash
+```
+
+```shell
+source ~/<your_workspace>/install/setup.bash
+```
+
+---
+
+#### Run Navigation Test
+
+- run navigation
+```shell
+ros2 launch robot_navigation navigation.launch.py
+```

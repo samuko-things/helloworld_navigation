@@ -2,7 +2,7 @@ amcl:
   ros__parameters:
     # ROS2 Interface
     use_sim_time: true
-    base_frame_id: "base_link"
+    base_frame_id: "base_footprint"
     odom_frame_id: "odom"
     global_frame_id: "map"
     scan_topic: /lidar/scan

@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://ros.org/wiki/xacro">
 
-  <gazebo reference="chassis">
+  <gazebo reference="base_link">
     <visual>
       <xacro:gz_material_orange/>
     </visual>
@@ -67,7 +67,7 @@
     <plugin name="gz::sim::systems::OdometryPublisher" filename="gz-sim-odometry-publisher-system">
       <odom_topic>odom</odom_topic>
       <odom_frame>odom</odom_frame>
-      <robot_base_frame>base_link</robot_base_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
       <publish_tf>true</publish_tf>
       <tf_topic>tf</tf_topic>
       <odom_publish_frequency>40</odom_publish_frequency>

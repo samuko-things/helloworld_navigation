@@ -19,7 +19,7 @@ def generate_launch_description():
   robot_sim_pkg_path = get_package_share_directory('robot_simulation') 
 
   # initial robot pose
-  x_pos = 0.0; y_pos = 1.0; z_pos = 1.0; yaw = 0.0
+  x_pos = 0.0; y_pos = 1.0; z_pos = 0.1; yaw = 0.0
 
   # world_file_name = 'empty'
   world_file_name = 'room_with_walls'

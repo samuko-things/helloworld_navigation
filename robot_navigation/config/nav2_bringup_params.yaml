@@ -2,7 +2,7 @@ amcl:
   ros__parameters:
     # ROS2 Interface
     use_sim_time: true
-    base_frame_id: "base_link"
+    base_frame_id: "base_footprint"
     odom_frame_id: "odom"
     global_frame_id: "map"
     scan_topic: /lidar/scan
@@ -75,7 +75,7 @@ global_costmap:
       update_frequency: 1.0
       publish_frequency: 1.0
       global_frame: map
-      robot_base_frame: base_link
+      robot_base_frame: base_footprint
       robot_radius: 0.10
       resolution: 0.05
       track_unknown_space: true
@@ -111,7 +111,7 @@ local_costmap:
       update_frequency: 5.0
       publish_frequency: 2.0
       global_frame: odom
-      robot_base_frame: base_link
+      robot_base_frame: base_footprint
       rolling_window: true
       width: 3
       height: 3
@@ -134,12 +134,25 @@ local_costmap:
           obstacle_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 4.0
-        inflation_radius: 0.4
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.5
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: true
       always_send_full_costmap: true
+
+
+# planner_server:
+#   ros__parameters:
+#     use_sim_time: true
+#     expected_planner_frequency: 10.0
+#     planner_plugins: ["GridBased"]
+#     costmap_update_timeout: 1.0
+#     GridBased:
+#       plugin: "nav2_navfn_planner::NavfnPlanner"
+#       tolerance: 0.5
+#       use_astar: true
+#       allow_unknown: true
 
 
 planner_server:
@@ -147,35 +160,11 @@ planner_server:
     use_sim_time: true
     expected_planner_frequency: 10.0
     planner_plugins: ["GridBased"]
-    costmap_update_timeout: 1.0
     GridBased:
-      plugin: "nav2_navfn_planner::NavfnPlanner"
-      tolerance: 0.5
-      use_astar: true
-      allow_unknown: true
-
-
-# planner_server:
-#   ros__parameters:
-#     use_sim_time: true
-#     expected_planner_frequency: 10.0
-#     planner_plugins: ["GridBased"]
-#     GridBased:
-#       plugin: "nav2_theta_star_planner::ThetaStarPlanner" # In Iron and older versions, "/" was used instead of "::"
-#       how_many_corners: 8
-#       w_euc_cost: 1.0
-#       w_traversal_cost: 2.0
-
-
-# planner_server:
-#   ros__parameters:
-#     use_sim_time: true
-#     expected_planner_frequency: 10.0
-#     planner_plugins: ["GridBased"]
-#     GridBased:
-#       plugin: "test_planner_plugin::TestPlanner"
-#       cost_limit: 1.0
-#       planner_name: "test"
+      plugin: "nav2_lazy_theta_planner::LazyThetaPlanner"
+      los_shortcut_cost_limit: 5    # Strict limit for line-of-sight shortcuts through the inflation layer (value ranges from 1-100)
+      cost_travel_multiplier: 3.0   # Weight for penalizing traversal through inflation (try values between 1.0 to 3.0)
+      smooth_path: 1                # 1 - apply smoothening | 0 - don't apply smoothening 
 
 
 
@@ -239,7 +228,7 @@ controller_server:
 bt_navigator:
   ros__parameters:
     global_frame: map
-    robot_base_frame: base_link
+    robot_base_frame: base_footprint
     odom_topic: /odom
     bt_loop_duration: 100
     default_server_timeout: 20
@@ -284,7 +273,7 @@ behavior_server:
       plugin: "nav2_behaviors::AssistedTeleop"
     local_frame: odom
     global_frame: map
-    robot_base_frame: base_link
+    robot_base_frame: base_footprint
     transform_tolerance: 0.1
     simulate_ahead_time: 2.0
     max_rotational_vel: 0.7

@@ -24,19 +24,6 @@ def generate_launch_description():
   world_file_name = 'room_with_walls'
   # world_file_name = 'bookstore'
   # world_file_name = 'hospital'
- 
-  bt_nav_to_pose_xml = os.path.join(robot_nav_pkg_path, 'config', 'bt', 'navigate_to_pose_w_smoothing.xml')
-  bt_nav_through_poses_xml = os.path.join(robot_nav_pkg_path, 'config', 'bt', 'navigate_through_pose_w_smoothing.xml')
-
-  rewritten_nav_params_file = RewrittenYaml(
-    source_file=nav_params_file,
-    root_key='',
-    param_rewrites={
-        'bt_navigator.ros__parameters.default_nav_to_pose_bt_xml': bt_nav_to_pose_xml,
-        'bt_navigator.ros__parameters.default_nav_through_poses_bt_xml': bt_nav_through_poses_xml,
-    },
-    convert_types=True,
-  )
 
   #--------------------------------------------------------------------------
 
@@ -53,8 +40,7 @@ def generate_launch_description():
   
   declare_nav_params_cmd = DeclareLaunchArgument(
       name='nav_params',
-      # default_value=nav_params_file,
-      default_value=rewritten_nav_params_file,
+      default_value=nav_params_file,
       description='file path to the parameter file'
     )
   
