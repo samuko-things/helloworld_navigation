@@ -13,8 +13,11 @@
   <depend>rclcpp</depend>
   <depend>nav_msgs</depend>
   <depend>slam_toolbox</depend>
-
-  <!-- Recommended - Build EasyNav Fullly from Source - (https://easynavigation.github.io/build_install/index.html#build-from-source) -->
+  <depend>easynav</depend>
+  <depend>easynav_costmap_maps_manager</depend>
+  <depend>easynav_costmap_localizer</depend>
+  <depend>easynav_costmap_planner</depend>
+  <depend>easynav_regulated_pp_controller</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
