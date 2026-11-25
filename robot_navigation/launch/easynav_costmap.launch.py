@@ -83,9 +83,9 @@ def generate_launch_description():
     twist_stamper = Node(
         package='twist_stamper',
         executable='twist_stamper',
-        # parameters=[
-        #     {"frame_id"}
-        # ],
+        parameters=[
+            {"frame_id": "odom"}
+        ],
         output='screen',
         remappings=[
             ('/cmd_vel_in', '/cmd_vel_easynav'),
