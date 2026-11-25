@@ -14,6 +14,9 @@
   <depend>nav_msgs</depend>
   <depend>slam_toolbox</depend>
   <depend>easynav</depend>
+  <depend>easynav_simple_maps_manager</depend>
+  <depend>easynav_simple_localizer</depend>
+  <depend>easynav_simple_planner</depend>
   <depend>easynav_costmap_maps_manager</depend>
   <depend>easynav_costmap_localizer</depend>
   <depend>easynav_costmap_planner</depend>
