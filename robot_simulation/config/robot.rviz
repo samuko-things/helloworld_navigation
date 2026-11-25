@@ -6,6 +6,7 @@ Panels:
       Expanded:
         - /Global Options1
         - /TF1/Frames1
+        - /SimpleMap1/Topic1
       Splitter Ratio: 0.5
     Tree Height: 657
   - Class: rviz_common/Selection
@@ -236,7 +237,7 @@ Visualization Manager:
       Name: SimpleMap
       Topic:
         Depth: 5
-        Durability Policy: Volatile
+        Durability Policy: Transient Local
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
@@ -343,7 +344,7 @@ Visualization Manager:
       Name: CostmapStatic
       Topic:
         Depth: 5
-        Durability Policy: Volatile
+        Durability Policy: Transient Local
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
