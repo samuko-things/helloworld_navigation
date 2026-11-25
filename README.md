@@ -1,7 +1,7 @@
-## My Helloworld Navigation (ROS2 Jazzy) with EasyNav
+## My Helloworld Navigation (ROS2 Jazzy) with EasyNav Lazy Theta Planner Plugin
 
 
-#### Install and build Build Robot Navigation with EasNav
+#### Install and build Build Robot Navigation and EasNav Lazy Theta Planner Plugin
 
 - clone the robot navigation repo (**helloworld_navigation**) in your workspace
 ```shell
